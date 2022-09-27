@@ -1,7 +1,10 @@
 using System;
 using System.Diagnostics;
+using TinyOSCore.Cpu;
+using TinyOSCore.Exceptions;
+using TinyOSCore.MemoryManagement;
 
-namespace TinyOSCore;
+namespace TinyOSCore.Core;
 
 /// <summary>
 ///     The delegate (object-oriented function pointer) definition for an OS System Call.
@@ -37,31 +40,6 @@ public class OS
     private readonly bool _dumpInstructions;
 
     /// <summary>
-    ///     Holds a reference to the current running <see cref="Process" />
-    /// </summary>
-    public Process currentProcess;
-
-    /// <summary>
-    ///     There are 10 events, numbered 1 to 10.  Event 0 is not used
-    /// </summary>
-    public EventState[] events = new EventState[11];
-
-    /// <summary>
-    ///     There are 10 locks, numbered 1 to 10.  Lock 0 is not used.
-    ///     We will store 0 when the lock is free, or the ProcessID when the lock is acquired
-    /// </summary>
-    public uint[] locks = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-
-    /// <summary>
-    ///     A reference to the <see cref="MemoryManager" /> Class.  A <see cref="Process" /> memory accesses go
-    ///     through this class.
-    /// </summary>
-    /// <example>
-    ///     theOS.memoryMgr[processId, 5]; //accesses memory at address 5
-    /// </example>
-    public MemoryManager memoryMgr;
-
-    /// <summary>
     ///     Contains the <see cref="Process" /> and the <see cref="Process.ProcessControlBlock" /> for all runningProcesses
     /// </summary>
     private readonly ProcessCollection _runningProcesses = new ProcessCollection();
@@ -72,9 +50,34 @@ public class OS
     /// <param name="virtualMemoryBytes">The number of "addressable" bytes of memory for the whole OS.</param>
     public OS(uint virtualMemoryBytes)
     {
-        memoryMgr = new MemoryManager(virtualMemoryBytes);
+        MemoryMgr = new MemoryManager(virtualMemoryBytes);
         _dumpInstructions = bool.Parse(EntryPoint.Configuration["DumpInstruction"]);
     }
+
+    /// <summary>
+    ///     Holds a reference to the current running <see cref="Process" />
+    /// </summary>
+    public Process CurrentProcess { get; set; }
+
+    /// <summary>
+    ///     A reference to the <see cref="MemoryManager" /> Class.  A <see cref="Process" /> memory accesses go
+    ///     through this class.
+    /// </summary>
+    /// <example>
+    ///     theOS.memoryMgr[processId, 5]; //accesses memory at address 5
+    /// </example>
+    public MemoryManager MemoryMgr { get; }
+
+    /// <summary>
+    ///     There are 10 locks, numbered 1 to 10.  Lock 0 is not used.
+    ///     We will store 0 when the lock is free, or the ProcessID when the lock is acquired
+    /// </summary>
+    public uint[] Locks { get; } = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+
+    /// <summary>
+    ///     There are 10 events, numbered 1 to 10.  Event 0 is not used
+    /// </summary>
+    public EventState[] Events { get; } = new EventState[11];
 
     /// <summary>
     ///     This counter is incremented as new processes are created.
@@ -83,19 +86,20 @@ public class OS
     public static uint ProcessIdPool { get; set; }
 
     /// <summary>
-    ///     Checks if the <see cref="currentProcess" /> is eligible to run
+    ///     Checks if the <see cref="CurrentProcess" /> is eligible to run
     /// </summary>
-    /// <returns>true if the <see cref="currentProcess" /> is eligible to run</returns>
+    /// <returns>true if the <see cref="CurrentProcess" /> is eligible to run</returns>
     public bool CurrentProcessIsEligible()
     {
-        if (currentProcess == null) return false;
-
-        if (currentProcess.PCB.State == ProcessState.Terminated
-            || currentProcess.PCB.State == ProcessState.WaitingOnLock
-            || currentProcess.PCB.State == ProcessState.WaitingAsleep
-            || currentProcess.PCB.State == ProcessState.WaitingOnEvent)
+        if (CurrentProcess == null)
+        {
             return false;
-        return true;
+        }
+
+        return CurrentProcess.ProcessControlBlock.State != ProcessState.Terminated 
+               && CurrentProcess.ProcessControlBlock.State != ProcessState.WaitingOnLock 
+               && CurrentProcess.ProcessControlBlock.State != ProcessState.WaitingAsleep &&
+               CurrentProcess.ProcessControlBlock.State != ProcessState.WaitingOnEvent;
     }
 
     /// <summary>
@@ -104,12 +108,12 @@ public class OS
     /// <param name="processIndex">The Index (not the ProcessID!) in the <see cref="_runningProcesses" /> table of a Process</param>
     public void DumpProcessStatistics(int processIndex)
     {
-        var p = _runningProcesses[processIndex];
+        var process = _runningProcesses[processIndex];
 
-        Console.WriteLine("Removed Exited Process # {0}", p.PCB.Pid);
-        Console.WriteLine("  # of Page Faults:      {0}", memoryMgr.PageFaultsForProcess(p));
-        Console.WriteLine("  # of Clock Cycles:     {0}", p.PCB.ClockCycles);
-        Console.WriteLine("  # of Context Switches: {0}", p.PCB.ContextSwitches);
+        Console.WriteLine($"Removed Exited Process # {process.ProcessControlBlock.Pid}");
+        Console.WriteLine($"  # of Page Faults:      {MemoryMgr.PageFaultsForProcess(process)}");
+        Console.WriteLine($"  # of Clock Cycles:     {process.ProcessControlBlock.ClockCycles}");
+        Console.WriteLine($"  # of Context Switches: {process.ProcessControlBlock.ContextSwitches}");
     }
 
     /// <summary>
@@ -126,12 +130,12 @@ public class OS
             //
             for (var i = _runningProcesses.Count - 1; i >= 0; i--)
             {
-                if (_runningProcesses[i].PCB.State == ProcessState.Terminated)
+                if (_runningProcesses[i].ProcessControlBlock.State == ProcessState.Terminated)
                 {
                     DumpProcessStatistics(i);
-                    memoryMgr.ReleaseMemoryOfProcess(_runningProcesses[i].PCB.Pid);
-                    _runningProcesses[i].PCB.HeapPageTable.Clear();
-                    ReleaseLocksOfProccess(_runningProcesses[i].PCB.Pid);
+                    MemoryMgr.ReleaseMemoryOfProcess(_runningProcesses[i].ProcessControlBlock.Pid);
+                    _runningProcesses[i].ProcessControlBlock.HeapPageTable.Clear();
+                    ReleaseLocksOfProccess(_runningProcesses[i].ProcessControlBlock.Pid);
                     _runningProcesses.RemoveAt(i);
                     CPU.DumpPhysicalMemory();
                 }
@@ -145,165 +149,180 @@ public class OS
             if (_runningProcesses.Count == 0)
             {
                 Console.WriteLine("No Processes");
-                if (bool.Parse(EntryPoint.Configuration["PauseOnExit"])) Console.ReadLine();
+                if (bool.Parse(EntryPoint.Configuration["PauseOnExit"]))
+                {
+                    Console.ReadLine();
+                }
+
                 Environment.Exit(0);
             }
             else
             {
-                foreach (var p in _runningProcesses)
+                HandleActiveProcesses();
+            }
+        }
+    }
+
+    private void HandleActiveProcesses()
+    {
+        foreach (var process in _runningProcesses)
+        {
+            switch (process.ProcessControlBlock.State)
+            {
+                case ProcessState.Terminated:
+                    //yank old processes outside the foreach
+                    break;
+                case ProcessState.WaitingAsleep:
+                    //is this process waiting for an event?
+                    break;
+                case ProcessState.WaitingOnLock:
+                    //is this process waiting for an event?
+                    break;
+                case ProcessState.WaitingOnEvent:
+                    //is this process waiting for an event?
+                    break;
+                case ProcessState.NewProcess:
+                case ProcessState.Ready:
+                    HandleRunningAndReadyProcesses(process);
+                    break;
+            }
+        }
+    }
+
+    private void HandleRunningAndReadyProcesses(Process process)
+    {
+        CurrentProcess = process;
+
+        //copy state from PCB to CPU
+        LoadCPUState();
+
+        DumpContextSwitchIn();
+
+        // Reset this flag. If we need to interrupt execution 
+        // because a lock has been made available
+        // or an Event has signaled, we can preempt the current process
+        var preemptCurrentProcess = false;
+
+        while (CurrentProcessIsEligible())
+        {
+            CurrentProcess.ProcessControlBlock.State = ProcessState.Running;
+
+            //CPU.DumpPhysicalMemory();
+            //CPU.DumpRegisters();
+
+            try
+            {
+                CPU.ExecuteNextOpCode();
+                CurrentProcess.ProcessControlBlock.ClockCycles++;
+            }
+            catch (MemoryException e)
+            {
+                Console.WriteLine(e.ToString());
+                CPU.DumpRegisters();
+                CurrentProcess.ProcessControlBlock.State = ProcessState.Terminated;
+            }
+            catch (StackException e)
+            {
+                Console.WriteLine(e.ToString());
+                CPU.DumpRegisters();
+                CurrentProcess.ProcessControlBlock.State = ProcessState.Terminated;
+            }
+            catch (HeapException e)
+            {
+                Console.WriteLine(e.ToString());
+                CPU.DumpRegisters();
+                CurrentProcess.ProcessControlBlock.State = ProcessState.Terminated;
+            }
+
+            CPU.DumpPhysicalMemory();
+            CPU.DumpRegisters();
+
+            //
+            // Update any sleeping processes
+            //
+            foreach (var sleepingProcess in _runningProcesses)
+            {
+                if (sleepingProcess.ProcessControlBlock.State == ProcessState.WaitingAsleep)
                 {
-                    switch (p.PCB.State)
+                    // a sleepCounter of 0 sleeps forever if we are waiting
+                    //If we JUST reached 0, wake up!
+                    if (sleepingProcess.ProcessControlBlock.SleepCounter != 0)
                     {
-                        case ProcessState.Terminated:
-                            //yank old processes outside the foreach
-                            break;
-                        case ProcessState.WaitingAsleep:
-                            //is this process waiting for an event?
-                            break;
-                        case ProcessState.WaitingOnLock:
-                            //is this process waiting for an event?
-                            break;
-                        case ProcessState.WaitingOnEvent:
-                            //is this process waiting for an event?
-                            break;
-                        case ProcessState.NewProcess:
-                        case ProcessState.Ready:
-                            currentProcess = p;
+                        if (--sleepingProcess.ProcessControlBlock.SleepCounter == 0)
+                        {
+                            sleepingProcess.ProcessControlBlock.State = ProcessState.Ready;
+                            preemptCurrentProcess = true;
+                        }
+                    }
+                }
+                else if (sleepingProcess.ProcessControlBlock.State == ProcessState.WaitingOnEvent)
+                {
+                    // Are we waiting for an event?  We'd better be!
+                    Debug.Assert(sleepingProcess.ProcessControlBlock.WaitingEvent != 0);
 
-                            //copy state from PCB to CPU
-                            LoadCPUState();
+                    // Had the event been signalled recently?
+                    if (Events[sleepingProcess.ProcessControlBlock.WaitingEvent] == EventState.Signaled)
+                    {
+                        Events[sleepingProcess.ProcessControlBlock.WaitingEvent] = EventState.NonSignaled;
+                        sleepingProcess.ProcessControlBlock.State = ProcessState.Ready;
+                        sleepingProcess.ProcessControlBlock.WaitingEvent = 0;
+                        preemptCurrentProcess = true;
+                    }
+                }
+                else if (sleepingProcess.ProcessControlBlock.State == ProcessState.WaitingOnLock)
+                {
+                    // We are are in the WaitingOnLock state, we can't wait on the "0" lock
+                    Debug.Assert(sleepingProcess.ProcessControlBlock.WaitingLock != 0);
 
-                            DumpContextSwitchIn();
-
-                            // Reset this flag. If we need to interrupt execution 
-                            // because a lock has been made available
-                            // or an Event has signaled, we can preempt the current process
-                            var preemptCurrentProcess = false;
-
-                            while (CurrentProcessIsEligible())
-                            {
-                                currentProcess.PCB.State = ProcessState.Running;
-
-                                //CPU.DumpPhysicalMemory();
-                                //CPU.DumpRegisters();
-
-                                try
-                                {
-                                    CPU.ExecuteNextOpCode();
-                                    currentProcess.PCB.ClockCycles++;
-                                }
-                                catch (MemoryException e)
-                                {
-                                    Console.WriteLine(e.ToString());
-                                    CPU.DumpRegisters();
-                                    currentProcess.PCB.State = ProcessState.Terminated;
-                                }
-                                catch (StackException e)
-                                {
-                                    Console.WriteLine(e.ToString());
-                                    CPU.DumpRegisters();
-                                    currentProcess.PCB.State = ProcessState.Terminated;
-                                }
-                                catch (HeapException e)
-                                {
-                                    Console.WriteLine(e.ToString());
-                                    CPU.DumpRegisters();
-                                    currentProcess.PCB.State = ProcessState.Terminated;
-                                }
-
-                                CPU.DumpPhysicalMemory();
-                                CPU.DumpRegisters();
-
-                                //
-                                // Update any sleeping processes
-                                //
-                                foreach (var sleepingProcess in _runningProcesses)
-                                {
-                                    switch (sleepingProcess.PCB.State)
-                                    {
-                                        case ProcessState.WaitingAsleep:
-                                            // a sleepCounter of 0 sleeps forever if we are waiting
-                                            if (sleepingProcess.PCB.SleepCounter != 0)
-                                                //If we JUST reached 0, wake up!
-                                                if (--sleepingProcess.PCB.SleepCounter == 0)
-                                                {
-                                                    sleepingProcess.PCB.State = ProcessState.Ready;
-                                                    preemptCurrentProcess = true;
-                                                }
-
-                                            break;
-                                        case ProcessState.WaitingOnEvent:
-                                            // Are we waiting for an event?  We'd better be!
-                                            Debug.Assert(sleepingProcess.PCB.WaitingEvent != 0);
-
-                                            // Had the event been signalled recently?
-                                            if (events[sleepingProcess.PCB.WaitingEvent] == EventState.Signaled)
-                                            {
-                                                events[sleepingProcess.PCB.WaitingEvent] = EventState.NonSignaled;
-                                                sleepingProcess.PCB.State = ProcessState.Ready;
-                                                sleepingProcess.PCB.WaitingEvent = 0;
-                                                preemptCurrentProcess = true;
-                                            }
-
-                                            break;
-                                        case ProcessState.WaitingOnLock:
-                                            // We are are in the WaitingOnLock state, we can't wait on the "0" lock
-                                            Debug.Assert(sleepingProcess.PCB.WaitingLock != 0);
-
-                                            // Has the lock be released recently?
-                                            if (locks[sleepingProcess.PCB.WaitingLock] == 0)
-                                            {
-                                                // Acquire the Lock and wake up!
-                                                locks[sleepingProcess.PCB.WaitingLock] = sleepingProcess.PCB.WaitingLock;
-                                                sleepingProcess.PCB.State = ProcessState.Ready;
-                                                preemptCurrentProcess = true;
-                                                sleepingProcess.PCB.WaitingLock = 0;
-                                                
-                                            }
-
-                                            break;
-                                    }
-                                }
-
-                                // Have we used up our slice of time?
-                                var eligible = currentProcess.PCB.ClockCycles == 0 
-                                                    ||  currentProcess.PCB.ClockCycles % currentProcess.PCB.TimeQuantum != 0;
-                                if (!eligible)
-                                {
-                                    break;
-                                }
-
-                                if (preemptCurrentProcess)
-                                {
-                                    break;
-                                }
-                            }
-
-                            if (currentProcess.PCB.State != ProcessState.Terminated)
-                            {
-                                //copy state from CPU to PCB
-                                if (currentProcess.PCB.State != ProcessState.WaitingAsleep
-                                    && currentProcess.PCB.State != ProcessState.WaitingOnLock
-                                    && currentProcess.PCB.State != ProcessState.WaitingOnEvent)
-                                    currentProcess.PCB.State = ProcessState.Ready;
-                                {
-                                    currentProcess.PCB.ContextSwitches++;
-                                }
-
-                                DumpContextSwitchOut();
-
-                                SaveCPUState();
-
-                                //Clear registers for testing
-                                CPU.registers = new uint[12];
-                            }
-
-                            currentProcess = null;
-                            break;
+                    // Has the lock be released recently?
+                    if (Locks[sleepingProcess.ProcessControlBlock.WaitingLock] == 0)
+                    {
+                        // Acquire the Lock and wake up!
+                        Locks[sleepingProcess.ProcessControlBlock.WaitingLock] =
+                            sleepingProcess.ProcessControlBlock.WaitingLock;
+                        sleepingProcess.ProcessControlBlock.State = ProcessState.Ready;
+                        preemptCurrentProcess = true;
+                        sleepingProcess.ProcessControlBlock.WaitingLock = 0;
+                        preemptCurrentProcess = true;
                     }
                 }
             }
+
+            // Have we used up our slice of time?
+            var eligible = CurrentProcess.ProcessControlBlock.ClockCycles == 0 ||
+                            CurrentProcess.ProcessControlBlock.ClockCycles % CurrentProcess.ProcessControlBlock.TimeQuantum != 0;
+            if (!eligible)
+            {
+                break;
+            }
+
+            if (preemptCurrentProcess)
+            {
+                break;
+            }
         }
+
+        if (CurrentProcess.ProcessControlBlock.State != ProcessState.Terminated)
+        {
+            //copy state from CPU to PCB
+            if (CurrentProcess.ProcessControlBlock.State != ProcessState.WaitingAsleep
+                && CurrentProcess.ProcessControlBlock.State != ProcessState.WaitingOnLock
+                && CurrentProcess.ProcessControlBlock.State != ProcessState.WaitingOnEvent)
+            {
+                CurrentProcess.ProcessControlBlock.State = ProcessState.Ready;
+            }
+
+            CurrentProcess.ProcessControlBlock.ContextSwitches++;
+
+            DumpContextSwitchOut();
+
+            SaveCPUState();
+
+            //Clear registers for testing
+            CPU.registers = new uint[12];
+        }
+
+        CurrentProcess = null;
     }
 
     /// <summary>
@@ -312,11 +331,12 @@ public class OS
     /// </summary>
     public void DumpContextSwitchIn()
     {
-        if (!bool.Parse(EntryPoint.Configuration["DumpContextSwitch"]))
+        if (bool.Parse(EntryPoint.Configuration["DumpContextSwitch"]) == false)
         {
             return;
         }
-        Console.WriteLine($"Switching in Process {currentProcess.PCB.Pid} with ip at {currentProcess.PCB.InstructionPointer}");
+
+        Console.WriteLine($"Switching in Process {CurrentProcess.ProcessControlBlock.Pid} with ip at {CurrentProcess.ProcessControlBlock.InstructionPointer}");
     }
 
     /// <summary>
@@ -325,11 +345,12 @@ public class OS
     /// </summary>
     public void DumpContextSwitchOut()
     {
-        if (!bool.Parse(EntryPoint.Configuration["DumpContextSwitch"]))
+        if (bool.Parse(EntryPoint.Configuration["DumpContextSwitch"]) == false)
         {
             return;
         }
-        Console.WriteLine($"Switching out Process {currentProcess.PCB.Pid} with ip at {CPU.InstructionPointer}");
+
+        Console.WriteLine($"Switching out Process {CurrentProcess.ProcessControlBlock.Pid} with ip at {CPU.InstructionPointer}");
     }
 
     /// <summary>
@@ -339,13 +360,14 @@ public class OS
     public void DumpProcessMemory(Process p)
     {
         var address = 0;
-        for (uint i = 0; i < p.PCB.ProcessMemorySize; i++)
+        for (uint i = 0; i < p.ProcessControlBlock.ProcessMemorySize; i++)
         {
-            var b = memoryMgr[p.PCB.Pid, i];
+            var b = MemoryMgr[p.ProcessControlBlock.Pid, i];
             if (address == 0 || address % 16 == 0)
             {
                 Console.Write($"{Environment.NewLine}{address,-4:000} ");
             }
+
             address++;
             if (b == 0)
             {
@@ -366,27 +388,27 @@ public class OS
     }
 
     /// <summary>
-    ///     Called on a context switch. Copy the CPU's <see cref="CPU.registers" /> to the <see cref="currentProcess" />'s
+    ///     Called on a context switch. Copy the CPU's <see cref="CPU.registers" /> to the <see cref="CurrentProcess" />'s
     ///     <see cref="CPU.registers" />
     /// </summary>
     private void SaveCPUState()
     {
-        CPU.registers.CopyTo(currentProcess.PCB.Registers, 0);
-        currentProcess.PCB.ZeroFlag = CPU.ZeroFlag;
-        currentProcess.PCB.SignFlag = CPU.SignFlag;
-        currentProcess.PCB.InstructionPointer = CPU.InstructionPointer;
+        CPU.registers.CopyTo(CurrentProcess.ProcessControlBlock.Registers, 0);
+        CurrentProcess.ProcessControlBlock.zf = CPU.ZeroFlag;
+        CurrentProcess.ProcessControlBlock.SignFlag = CPU.SignFlag;
+        CurrentProcess.ProcessControlBlock.InstructionPointer = CPU.InstructionPointer;
     }
 
     /// <summary>
-    ///     Called on a context switch. Copy the <see cref="currentProcess" />'s
-    ///     <see cref="Process.ProcessControlBlock.Registers" /> to the CPU's <see cref="CPU.registers" />
+    ///     Called on a context switch. Copy the <see cref="CurrentProcess" />'s
+    ///     <see cref="Process.ProcessControlBlock.registers" /> to the CPU's <see cref="CPU.registers" />
     /// </summary>
     private void LoadCPUState()
     {
-        currentProcess.PCB.Registers.CopyTo(CPU.registers, 0);
-        CPU.ZeroFlag = currentProcess.PCB.ZeroFlag;
-        CPU.SignFlag = currentProcess.PCB.SignFlag;
-        CPU.InstructionPointer = currentProcess.PCB.InstructionPointer;
+        CurrentProcess.ProcessControlBlock.Registers.CopyTo(CPU.registers, 0);
+        CPU.ZeroFlag = CurrentProcess.ProcessControlBlock.zf;
+        CPU.SignFlag = CurrentProcess.ProcessControlBlock.SignFlag;
+        CPU.InstructionPointer = CurrentProcess.ProcessControlBlock.InstructionPointer;
     }
 
     /// <summary>
@@ -395,7 +417,7 @@ public class OS
     /// <param name="prog">Program to load</param>
     /// <param name="memorySize">Size of memory in bytes to assign to this Process</param>
     /// <returns>The newly created Process</returns>
-    public Process CreateProcess(Program prog, uint memorySize)
+    public Process createProcess(Program prog, uint memorySize)
     {
         // Get an array represting the code block
         var processCode = prog.GetMemoryImage();
@@ -404,10 +426,10 @@ public class OS
         var p = new Process(++ProcessIdPool, memorySize);
 
         // Map memory to the Process (if available, otherwise freak out)
-        memoryMgr.MapMemoryToProcess(p.PCB.ProcessMemorySize, p.PCB.Pid);
+        MemoryMgr.MapMemoryToProcess(p.ProcessControlBlock.ProcessMemorySize, p.ProcessControlBlock.Pid);
 
         // Set the initial IP to 0 (that's where exectution will begin)
-        p.PCB.InstructionPointer = 0;
+        p.ProcessControlBlock.InstructionPointer = 0;
 
         //
         // SETUP CODE SECTION
@@ -416,7 +438,7 @@ public class OS
         uint index = 0;
         foreach (var b in processCode)
         {
-            memoryMgr[p.PCB.Pid, index++] = b;
+            MemoryMgr[p.ProcessControlBlock.Pid, index++] = b;
         }
 
         //
@@ -424,8 +446,8 @@ public class OS
         //
         // Set stack pointer at the end of memory
         //
-        p.PCB.StackPointer = memorySize - 1;
-        p.PCB.StackSize = uint.Parse(EntryPoint.Configuration["StackSize"]);
+        p.ProcessControlBlock.StackPointer = memorySize - 1;
+        p.ProcessControlBlock.StackSize = uint.Parse(EntryPoint.Configuration["StackSize"]);
 
         //
         // SETUP CODE SECTION
@@ -434,24 +456,24 @@ public class OS
         //
         var roundedCodeLength = CPU.UtilRoundToBoundary((uint)processCode.Length, CPU.pageSize);
         //uint roundedCodeLength = (uint)(CPU.pageSize * ((processCode.Length / CPU.pageSize) + ((processCode.Length % CPU.pageSize > 0) ? 1: 0)));
-        p.PCB.CodeSize = roundedCodeLength;
+        p.ProcessControlBlock.CodeSize = roundedCodeLength;
 
         //
         // SETUP DATA SECTION
         //
         // Point Global Data just after the Code for now...
         //
-        p.PCB.Registers[9] = roundedCodeLength;
-        p.PCB.DataSize = uint.Parse(EntryPoint.Configuration["DataSize"]);
+        p.ProcessControlBlock.Registers[9] = roundedCodeLength;
+        p.ProcessControlBlock.DataSize = uint.Parse(EntryPoint.Configuration["DataSize"]);
 
         //
         // SETUP HEAP SECTION
         //
-        p.PCB.HeapAddrStart = p.PCB.CodeSize + p.PCB.DataSize;
-        p.PCB.HeapAddrEnd = p.PCB.ProcessMemorySize - p.PCB.StackSize;
+        p.ProcessControlBlock.HeapAddrStart = p.ProcessControlBlock.CodeSize + p.ProcessControlBlock.DataSize;
+        p.ProcessControlBlock.HeapAddrEnd = p.ProcessControlBlock.ProcessMemorySize - p.ProcessControlBlock.StackSize;
 
 
-        memoryMgr.CreateHeapTableForProcess(p);
+        MemoryMgr.CreateHeapTableForProcess(p);
 
         // Add ourselves to the runningProcesses table
         _runningProcesses.Add(p);
@@ -465,24 +487,23 @@ public class OS
     /// <param name="pid">Process ID</param>
     public void ReleaseLocksOfProccess(uint pid)
     {
-        for (var i = 0; i < locks.Length; i++)
+        for (var i = 0; i < Locks.Length; i++)
         {
-            if (locks[i] == pid)
+            if (Locks[i] == pid)
             {
-                locks[i] = 0;
+                Locks[i] = 0;
             }
         }
     }
 
 
     /// <summary>
-    ///     Utility function to fetch a 4 byte unsigned int from Process Memory based on the current
-    ///     <see cref="CPU.InstructionPointer" />
+    ///     Utility function to fetch a 4 byte unsigned int from Process Memory based on the current <see cref="CPU.InstructionPointer" />
     /// </summary>
     /// <returns>a new uint</returns>
     public uint FetchUIntAndMove()
     {
-        var retVal = memoryMgr.GetUIntFrom(currentProcess.PCB.Pid, CPU.InstructionPointer);
+        var retVal = MemoryMgr.GetUIntFrom(CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer);
         CPU.InstructionPointer += sizeof(uint);
         return retVal;
     }
@@ -494,7 +515,7 @@ public class OS
     public void Incr()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.Incr == instruction);
 
         //move to the param
@@ -503,7 +524,7 @@ public class OS
 
         if (_dumpInstructions)
         {
-            Console.WriteLine($" Pid:{currentProcess.PCB.Pid} {instruction} r{register}");
+            Console.WriteLine(" Pid:{0} {1} r{2}", CurrentProcess.ProcessControlBlock.Pid, instruction, register);
         }
 
         //increment the register pointed to by this memory
@@ -519,7 +540,7 @@ public class OS
     public void Addi()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.Addi == instruction);
 
         //move to the param containing the register
@@ -529,7 +550,7 @@ public class OS
 
         if (_dumpInstructions)
         {
-            Console.WriteLine($" Pid:{currentProcess.PCB.Pid} {instruction} r{register} {param1}");
+            Console.WriteLine(" Pid:{0} {1} r{2} {3}", CurrentProcess.ProcessControlBlock.Pid, instruction, register, param1);
         }
 
         //increment the register pointed to by this memory by the const next to it
@@ -545,7 +566,7 @@ public class OS
     public void Addr()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.Addr == instruction);
 
         //move to the param containing the 1st register
@@ -555,11 +576,11 @@ public class OS
 
         if (_dumpInstructions)
         {
-            Console.WriteLine($" Pid:{currentProcess.PCB.Pid} {instruction} r{register} {param1}");
+            Console.WriteLine(" Pid:{0} {1} r{2} {3}", CurrentProcess.ProcessControlBlock.Pid, instruction, register, param1);
         }
 
         //add 1st register and 2nd register and put the result in 1st register
-        CPU.registers[register] += CPU.registers[param1];
+        CPU.registers[register] = CPU.registers[register] + CPU.registers[param1];
     }
 
     /// <summary>
@@ -572,7 +593,7 @@ public class OS
     public void Cmpi()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.Cmpi == instruction);
 
         //move to the param containing the 1st register
@@ -582,7 +603,7 @@ public class OS
 
         if (_dumpInstructions)
         {
-            Console.WriteLine($" Pid:{currentProcess.PCB.Pid} {instruction} r{register} {param1}");
+            Console.WriteLine(" Pid:{0} {1} r{2} {3}", CurrentProcess.ProcessControlBlock.Pid, instruction, register, param1);
         }
 
         //compare register and const
@@ -613,7 +634,7 @@ public class OS
     public void Cmpr()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.Cmpr == instruction);
 
         //move to the param containing the 1st register
@@ -623,7 +644,7 @@ public class OS
 
         if (_dumpInstructions)
         {
-            Console.WriteLine($" Pid:{currentProcess.PCB.Pid} {instruction} r{register1} r{register2}");
+            Console.WriteLine(" Pid:{0} {1} r{2} r{3}", CurrentProcess.ProcessControlBlock.Pid, instruction, register1, register2);
         }
 
         //compare register and const
@@ -654,7 +675,7 @@ public class OS
     public void Call()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.Call == instruction);
 
         //move to the param containing the 1st register
@@ -663,10 +684,10 @@ public class OS
 
         if (_dumpInstructions)
         {
-            Console.WriteLine($" Pid:{currentProcess.PCB.Pid} {instruction} r{register}");
+            Console.WriteLine(" Pid:{0} {1} r{2}", CurrentProcess.ProcessControlBlock.Pid, instruction, register);
         }
 
-        StackPush(currentProcess.PCB.Pid, CPU.InstructionPointer);
+        StackPush(CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer);
 
         CPU.InstructionPointer += CPU.registers[register];
     }
@@ -681,7 +702,7 @@ public class OS
     public void Callm()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.Callm == instruction);
 
         //move to the param containing the 1st register
@@ -690,12 +711,12 @@ public class OS
 
         if (_dumpInstructions)
         {
-            Console.WriteLine($" Pid:{currentProcess.PCB.Pid} {instruction} r{register}");
+            Console.WriteLine(" Pid:{0} {1} r{2}", CurrentProcess.ProcessControlBlock.Pid, instruction, register);
         }
 
-        StackPush(currentProcess.PCB.Pid, CPU.InstructionPointer);
+        StackPush(CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer);
 
-        CPU.InstructionPointer += memoryMgr[currentProcess.PCB.Pid, CPU.registers[register]];
+        CPU.InstructionPointer += MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.registers[register]];
     }
 
     /// <summary>
@@ -707,17 +728,17 @@ public class OS
     public void Ret()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.Ret == instruction);
 
         CPU.InstructionPointer++;
 
         if (_dumpInstructions)
         {
-            Console.WriteLine($" Pid:{currentProcess.PCB.Pid} {instruction}");
+            Console.WriteLine(" Pid:{0} {1}", CurrentProcess.ProcessControlBlock.Pid, instruction);
         }
 
-        CPU.InstructionPointer = StackPop(currentProcess.PCB.Pid);
+        CPU.InstructionPointer = StackPop(CurrentProcess.ProcessControlBlock.Pid);
     }
 
 
@@ -731,7 +752,7 @@ public class OS
     public void Jmp()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.Jmp == instruction);
 
         //move to the param containing the 1st register
@@ -741,7 +762,7 @@ public class OS
 
         if (_dumpInstructions)
         {
-            Console.WriteLine($" Pid:{currentProcess.PCB.Pid} {instruction} r{register}");
+            Console.WriteLine(" Pid:{0} {1} r{2}", CurrentProcess.ProcessControlBlock.Pid, instruction, register);
         }
 
         var instructionsToSkip = (int)CPU.registers[register];
@@ -765,7 +786,7 @@ public class OS
     public void Jlt()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.Jlt == instruction);
 
         //move to the param containing the 1st register
@@ -774,10 +795,13 @@ public class OS
 
         if (_dumpInstructions)
         {
-            Console.WriteLine($" Pid:{currentProcess.PCB.Pid} {instruction} r{register}");
+            Console.WriteLine(" Pid:{0} {1} r{2}", CurrentProcess.ProcessControlBlock.Pid, instruction, register);
         }
 
-        if (CPU.SignFlag) CPU.InstructionPointer += CPU.registers[register];
+        if (CPU.SignFlag)
+        {
+            CPU.InstructionPointer += CPU.registers[register];
+        }
     }
 
     /// <summary>
@@ -789,7 +813,7 @@ public class OS
     public void Jgt()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.Jgt == instruction);
 
         //move to the param containing the 1st register
@@ -798,10 +822,13 @@ public class OS
 
         if (_dumpInstructions)
         {
-            Console.WriteLine($" Pid:{currentProcess.PCB.Pid} {instruction} r{register}");
+            Console.WriteLine(" Pid:{0} {1} r{2}", CurrentProcess.ProcessControlBlock.Pid, instruction, register);
         }
 
-        if (CPU.SignFlag == false) CPU.InstructionPointer += CPU.registers[register];
+        if (CPU.SignFlag == false)
+        {
+            CPU.InstructionPointer += CPU.registers[register];
+        }
     }
 
     /// <summary>
@@ -813,7 +840,7 @@ public class OS
     public void Je()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.Je == instruction);
 
         //move to the param containing the 1st register
@@ -822,7 +849,7 @@ public class OS
 
         if (_dumpInstructions)
         {
-            Console.WriteLine($" Pid:{currentProcess.PCB.Pid} {instruction} r{register}");
+            Console.WriteLine(" Pid:{0} {1} r{2}", CurrentProcess.ProcessControlBlock.Pid, instruction, register);
         }
 
         if (CPU.ZeroFlag)
@@ -837,7 +864,7 @@ public class OS
     /// </summary>
     public void Noop()
     {
-        
+        ;
     }
 
     /// <summary>
@@ -850,15 +877,15 @@ public class OS
     public void Exit()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.Exit == instruction);
 
         if (_dumpInstructions)
         {
-            Console.WriteLine($" Pid:{currentProcess.PCB.Pid} {instruction}");
+            Console.WriteLine(" Pid:{0} {1}", CurrentProcess.ProcessControlBlock.Pid, instruction);
         }
 
-        currentProcess.PCB.State = ProcessState.Terminated;
+        CurrentProcess.ProcessControlBlock.State = ProcessState.Terminated;
     }
 
     /// <summary>
@@ -870,7 +897,7 @@ public class OS
     public void Movi()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.Movi == instruction);
 
         CPU.InstructionPointer++;
@@ -879,7 +906,7 @@ public class OS
 
         if (_dumpInstructions)
         {
-            Console.WriteLine($" Pid:{currentProcess.PCB.Pid} {instruction} r{register} {param2}");
+            Console.WriteLine(" Pid:{0} {1} r{2} {3}", CurrentProcess.ProcessControlBlock.Pid, instruction, register, param2);
         }
 
         //move VALUE of param into 1st register 
@@ -895,7 +922,7 @@ public class OS
     public void Movr()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.Movr == instruction);
 
         //move to the param containing the 1st register
@@ -905,7 +932,7 @@ public class OS
 
         if (_dumpInstructions)
         {
-            Console.WriteLine($" Pid:{currentProcess.PCB.Pid} {instruction} r{register1} r{register2}");
+            Console.WriteLine(" Pid:{0} {1} r{2} r{3}", CurrentProcess.ProcessControlBlock.Pid, instruction, register1, register2);
         }
 
         //move VALUE of 2nd register into 1st register 
@@ -921,7 +948,7 @@ public class OS
     public void Movmr()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.Movmr == instruction);
 
         //move to the param containing the 1st register
@@ -931,11 +958,11 @@ public class OS
 
         if (_dumpInstructions)
         {
-            Console.WriteLine($" Pid:{currentProcess.PCB.Pid} {instruction} r{register1} r{register2}");
+            Console.WriteLine(" Pid:{0} {1} r{2} r{3}", CurrentProcess.ProcessControlBlock.Pid, instruction, register1, register2);
         }
 
         //move VALUE of memory pointed to by 2nd register into 1st register 
-        CPU.registers[register1] = memoryMgr.GetUIntFrom(currentProcess.PCB.Pid, CPU.registers[register2]);
+        CPU.registers[register1] = MemoryMgr.GetUIntFrom(CurrentProcess.ProcessControlBlock.Pid, CPU.registers[register2]);
     }
 
     /// <summary>
@@ -947,7 +974,7 @@ public class OS
     public void Movrm()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.Movrm == instruction);
 
         //move to the param containing the 1st register
@@ -957,11 +984,11 @@ public class OS
 
         if (_dumpInstructions)
         {
-            Console.WriteLine($" Pid:{currentProcess.PCB.Pid} {instruction} r{register1} r{register2}");
+            Console.WriteLine(" Pid:{0} {1} r{2} r{3}", CurrentProcess.ProcessControlBlock.Pid, instruction, register1, register2);
         }
 
         //set memory pointed to by register 1 to contents of register2
-        memoryMgr.SetUIntAt(currentProcess.PCB.Pid, CPU.registers[register1], CPU.registers[register2]);
+        MemoryMgr.SetUIntAt(CurrentProcess.ProcessControlBlock.Pid, CPU.registers[register1], CPU.registers[register2]);
     }
 
     /// <summary>
@@ -973,7 +1000,7 @@ public class OS
     public void Movmm()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.Movmm == instruction);
 
         //move to the param containing the 1st register
@@ -983,13 +1010,12 @@ public class OS
 
         if (_dumpInstructions)
         {
-            Console.WriteLine($" Pid:{currentProcess.PCB.Pid} {instruction} r{register1} r{register2}");
+            Console.WriteLine(" Pid:{0} {1} r{2} r{3}", CurrentProcess.ProcessControlBlock.Pid, instruction, register1, register2);
         }
 
         //set memory point to by register 1 to contents of memory pointed to by register 2
-        memoryMgr.SetUIntAt(currentProcess.PCB.Pid, 
-                            CPU.registers[register1],
-                            memoryMgr.GetUIntFrom(currentProcess.PCB.Pid, CPU.registers[register2]));
+        MemoryMgr.SetUIntAt(CurrentProcess.ProcessControlBlock.Pid, CPU.registers[register1],
+            MemoryMgr.GetUIntFrom(CurrentProcess.ProcessControlBlock.Pid, CPU.registers[register2]));
     }
 
     /// <summary>
@@ -1001,7 +1027,7 @@ public class OS
     public void Printr()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.Printr == instruction);
 
         //move to the param containing the 1st param
@@ -1010,7 +1036,7 @@ public class OS
 
         if (_dumpInstructions)
         {
-            Console.WriteLine($" Pid:{currentProcess.PCB.Pid} {instruction} r{register}");
+            Console.WriteLine(" Pid:{0} {1} r{2}", CurrentProcess.ProcessControlBlock.Pid, instruction, register);
         }
 
         Console.WriteLine(CPU.registers[register]);
@@ -1025,7 +1051,7 @@ public class OS
     public void Printm()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.Printm == instruction);
 
         //move to the param containing the 1st param
@@ -1034,10 +1060,10 @@ public class OS
 
         if (_dumpInstructions)
         {
-            Console.WriteLine($" Pid:{currentProcess.PCB.Pid} {instruction} r{register}");
+            Console.WriteLine(" Pid:{0} {1} r{2}", CurrentProcess.ProcessControlBlock.Pid, instruction, register);
         }
 
-        Console.WriteLine(memoryMgr[currentProcess.PCB.Pid, CPU.registers[register]]);
+        Console.WriteLine(MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.registers[register]]);
     }
 
     /// <summary>
@@ -1049,7 +1075,7 @@ public class OS
     public void Input()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.Input == instruction);
 
         //move to the param containing the 1st param
@@ -1058,10 +1084,10 @@ public class OS
 
         if (_dumpInstructions)
         {
-            Console.WriteLine($" Pid:{currentProcess.PCB.Pid} {instruction} r{register}");
+            Console.WriteLine(" Pid:{0} {1} r{2}", CurrentProcess.ProcessControlBlock.Pid, instruction, register);
         }
 
-        CPU.registers[register] = uint.Parse(Console.ReadLine() ?? string.Empty);
+        CPU.registers[register] = uint.Parse(Console.ReadLine());
     }
 
     /// <summary>
@@ -1076,7 +1102,7 @@ public class OS
     public void Sleep()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.Sleep == instruction);
 
         //move to the param containing the 1st param
@@ -1085,12 +1111,12 @@ public class OS
 
         if (_dumpInstructions)
         {
-            Console.WriteLine($" Pid:{currentProcess.PCB.Pid} {instruction} r{register}");
+            Console.WriteLine(" Pid:{0} {1} r{2}", CurrentProcess.ProcessControlBlock.Pid, instruction, register);
         }
 
         //Set the number of clockCycles to sleep
-        currentProcess.PCB.SleepCounter = CPU.registers[register];
-        currentProcess.PCB.State = ProcessState.WaitingAsleep;
+        CurrentProcess.ProcessControlBlock.SleepCounter = CPU.registers[register];
+        CurrentProcess.ProcessControlBlock.State = ProcessState.WaitingAsleep;
     }
 
     /// <summary>
@@ -1103,7 +1129,7 @@ public class OS
     public void SetPriority()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.SetPriority == instruction);
 
         //move to the param containing the 1st param
@@ -1112,10 +1138,10 @@ public class OS
 
         if (_dumpInstructions)
         {
-            Console.WriteLine($" Pid:{currentProcess.PCB.Pid} {instruction} r{register}");
+            Console.WriteLine(" Pid:{0} {1} r{2}", CurrentProcess.ProcessControlBlock.Pid, instruction, register);
         }
 
-        currentProcess.PCB.Priority = (int)Math.Min(CPU.registers[register], (int)ProcessPriority.MaxPriority);
+        CurrentProcess.ProcessControlBlock.Priority = (int)Math.Min(CPU.registers[register], (int)ProcessPriority.MaxPriority);
     }
 
     /// <summary>
@@ -1127,7 +1153,7 @@ public class OS
     public void Pushr()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.Pushr == instruction);
 
         //move to the param containing the 1st param
@@ -1136,10 +1162,10 @@ public class OS
 
         if (_dumpInstructions)
         {
-            Console.WriteLine($" Pid:{currentProcess.PCB.Pid} {instruction} r{register}");
+            Console.WriteLine(" Pid:{0} {1} r{2}", CurrentProcess.ProcessControlBlock.Pid, instruction, register);
         }
 
-        StackPush(currentProcess.PCB.Pid, CPU.registers[register]);
+        StackPush(CurrentProcess.ProcessControlBlock.Pid, CPU.registers[register]);
     }
 
     /// <summary>
@@ -1151,7 +1177,7 @@ public class OS
     public void Pushi()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.Pushi == instruction);
 
         //move to the param containing the 1st param
@@ -1160,10 +1186,10 @@ public class OS
 
         if (_dumpInstructions)
         {
-            Console.WriteLine($" Pid:{currentProcess.PCB.Pid} {instruction} {param}");
+            Console.WriteLine(" Pid:{0} {1} {2}", CurrentProcess.ProcessControlBlock.Pid, instruction, param);
         }
 
-        StackPush(currentProcess.PCB.Pid, param);
+        StackPush(CurrentProcess.ProcessControlBlock.Pid, param);
     }
 
     /// <summary>
@@ -1175,21 +1201,25 @@ public class OS
     public void TerminateProcess()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.TerminateProcess == instruction);
 
         //move to the param containing the register
         CPU.InstructionPointer++;
         var register = FetchUIntAndMove();
 
-        if (_dumpInstructions) Console.WriteLine(" Pid:{0} {1} r{2}", currentProcess.PCB.Pid, instruction, register);
+        if (_dumpInstructions)
+        {
+            Console.WriteLine(" Pid:{0} {1} r{2}", CurrentProcess.ProcessControlBlock.Pid, instruction, register);
+        }
 
         foreach (var p in _runningProcesses)
         {
-            if (p.PCB.Pid == CPU.registers[register])
+            if (p.ProcessControlBlock.Pid == CPU.registers[register])
             {
-                p.PCB.State = ProcessState.Terminated;
-                Console.WriteLine($"Process {currentProcess.PCB.Pid} has forceably terminated Process {p.PCB.Pid}");
+                p.ProcessControlBlock.State = ProcessState.Terminated;
+                Console.WriteLine("Process {0} has forceably terminated Process {1}", CurrentProcess.ProcessControlBlock.Pid,
+                    p.ProcessControlBlock.Pid);
                 break;
             }
         }
@@ -1204,7 +1234,7 @@ public class OS
     public void Popr()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.Popr == instruction);
 
         //move to the param containing the register
@@ -1213,10 +1243,10 @@ public class OS
 
         if (_dumpInstructions)
         {
-            Console.WriteLine($" Pid:{currentProcess.PCB.Pid} {instruction} r{register}");
+            Console.WriteLine(" Pid:{0} {1} r{2}", CurrentProcess.ProcessControlBlock.Pid, instruction, register);
         }
 
-        CPU.registers[register] = StackPop(currentProcess.PCB.Pid);
+        CPU.registers[register] = StackPop(CurrentProcess.ProcessControlBlock.Pid);
     }
 
     /// <summary>
@@ -1228,7 +1258,7 @@ public class OS
     public void MemoryClear()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.MemoryClear == instruction);
 
         //move to the param containing the 1st register
@@ -1238,11 +1268,11 @@ public class OS
 
         if (_dumpInstructions)
         {
-            Console.WriteLine($" Pid:{currentProcess.PCB.Pid} {instruction} r{register1} r{register2}");
+            Console.WriteLine(" Pid:{0} {1} r{2} r{3}", CurrentProcess.ProcessControlBlock.Pid, instruction, register1, register2);
         }
 
         //move VALUE of memory pointed to by 2nd register into 1st register 
-        memoryMgr.SetMemoryOfProcess(currentProcess.PCB.Pid, CPU.registers[register1], CPU.registers[register2], 0);
+        MemoryMgr.SetMemoryOfProcess(CurrentProcess.ProcessControlBlock.Pid, CPU.registers[register1], CPU.registers[register2], 0);
     }
 
     /// <summary>
@@ -1254,7 +1284,7 @@ public class OS
     public void Popm()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.Popm == instruction);
 
         //move to the param containing the register
@@ -1263,10 +1293,10 @@ public class OS
 
         if (_dumpInstructions)
         {
-            Console.WriteLine($" Pid:{currentProcess.PCB.Pid} {instruction} r{register}");
+            Console.WriteLine(" Pid:{0} {1} r{2}", CurrentProcess.ProcessControlBlock.Pid, instruction, register);
         }
 
-        memoryMgr.SetUIntAt(currentProcess.PCB.Pid, CPU.registers[register], StackPop(currentProcess.PCB.Pid));
+        MemoryMgr.SetUIntAt(CurrentProcess.ProcessControlBlock.Pid, CPU.registers[register], StackPop(CurrentProcess.ProcessControlBlock.Pid));
     }
 
     /// <summary>
@@ -1280,7 +1310,7 @@ public class OS
     public void AcquireLock()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.AcquireLock == instruction);
 
         //move to the param containing the register
@@ -1289,27 +1319,27 @@ public class OS
 
         if (_dumpInstructions)
         {
-            Console.WriteLine($" Pid:{currentProcess.PCB.Pid} {instruction} r{register}");
+            Console.WriteLine(" Pid:{0} {1} r{2}", CurrentProcess.ProcessControlBlock.Pid, instruction, register);
         }
 
         //Are we the first ones here? with a valid lock?
         if (CPU.registers[register] > 0 && CPU.registers[register] <= 10)
         {
-            if (locks[CPU.registers[register]] == 0)
+            if (Locks[CPU.registers[register]] == 0)
             {
                 //Set the lock specified in the register as locked...
-                locks[CPU.registers[register]] = currentProcess.PCB.Pid;
+                Locks[CPU.registers[register]] = CurrentProcess.ProcessControlBlock.Pid;
             }
-            else if (locks[CPU.registers[register]] == currentProcess.PCB.Pid)
+            else if (Locks[CPU.registers[register]] == CurrentProcess.ProcessControlBlock.Pid)
             {
                 //No-Op, we already have this lock
-                
+                ;
             }
             else
             {
                 //Get in line for this lock
-                currentProcess.PCB.WaitingLock = CPU.registers[register];
-                currentProcess.PCB.State = ProcessState.WaitingOnLock;
+                CurrentProcess.ProcessControlBlock.WaitingLock = CPU.registers[register];
+                CurrentProcess.ProcessControlBlock.State = ProcessState.WaitingOnLock;
             }
         }
     }
@@ -1327,7 +1357,7 @@ public class OS
     public void ReleaseLock()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.ReleaseLock == instruction);
 
         //move to the param containing the register
@@ -1336,16 +1366,17 @@ public class OS
 
         if (_dumpInstructions)
         {
-            Console.WriteLine($" Pid:{currentProcess.PCB.Pid} {instruction} r{register}");
+            Console.WriteLine(" Pid:{0} {1} r{2}", CurrentProcess.ProcessControlBlock.Pid, instruction, register);
         }
 
         //Release only if we already have this lock, and it's a valid lock
-        if (CPU.registers[register] > 0 
-            && CPU.registers[register] <= 10 
-            && locks[CPU.registers[register]] == currentProcess.PCB.Pid)
+        if (CPU.registers[register] > 0 && CPU.registers[register] <= 10)
         {
-            //set the lock back to 0 (the OS)
-            locks[CPU.registers[register]] = 0;
+            if (Locks[CPU.registers[register]] == CurrentProcess.ProcessControlBlock.Pid)
+            {
+                //set the lock back to 0 (the OS)
+                Locks[CPU.registers[register]] = 0;
+            }
         }
     }
 
@@ -1358,7 +1389,7 @@ public class OS
     public void SignalEvent()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.SignalEvent == instruction);
 
         //move to the param containing the register
@@ -1367,12 +1398,12 @@ public class OS
 
         if (_dumpInstructions)
         {
-            Console.WriteLine($" Pid:{currentProcess.PCB.Pid} {instruction} r{register}");
+            Console.WriteLine(" Pid:{0} {1} r{2}", CurrentProcess.ProcessControlBlock.Pid, instruction, register);
         }
 
         if (CPU.registers[register] > 0 && CPU.registers[register] <= 10)
         {
-            events[CPU.registers[register]] = EventState.Signaled;
+            Events[CPU.registers[register]] = EventState.Signaled;
         }
     }
 
@@ -1385,7 +1416,7 @@ public class OS
     public void WaitEvent()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.WaitEvent == instruction);
 
         //move to the param containing the register
@@ -1394,13 +1425,13 @@ public class OS
 
         if (_dumpInstructions)
         {
-            Console.WriteLine($" Pid:{currentProcess.PCB.Pid} {instruction} r{register}");
+            Console.WriteLine(" Pid:{0} {1} r{2}", CurrentProcess.ProcessControlBlock.Pid, instruction, register);
         }
 
         if (CPU.registers[register] > 0 && CPU.registers[register] <= 10)
         {
-            currentProcess.PCB.WaitingEvent = CPU.registers[register];
-            currentProcess.PCB.State = ProcessState.WaitingOnEvent;
+            CurrentProcess.ProcessControlBlock.WaitingEvent = CPU.registers[register];
+            CurrentProcess.ProcessControlBlock.State = ProcessState.WaitingOnEvent;
         }
     }
 
@@ -1413,7 +1444,7 @@ public class OS
     public void MapSharedMem()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.MapSharedMem == instruction);
 
         //move to the param containing the register
@@ -1423,10 +1454,10 @@ public class OS
 
         if (_dumpInstructions)
         {
-            Console.WriteLine($" Pid:{currentProcess.PCB.Pid} {instruction} r{register1} r{register2}");
+            Console.WriteLine(" Pid:{0} {1} r{2} r{3}", CurrentProcess.ProcessControlBlock.Pid, instruction, register1, register2);
         }
 
-        CPU.registers[register2] = memoryMgr.MapSharedMemoryToProcess(CPU.registers[register1], currentProcess.PCB.Pid);
+        CPU.registers[register2] = MemoryMgr.MapSharedMemoryToProcess(CPU.registers[register1], CurrentProcess.ProcessControlBlock.Pid);
     }
 
 
@@ -1440,7 +1471,7 @@ public class OS
     public void Alloc()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.Alloc == instruction);
 
         //move to the param containing the register
@@ -1450,10 +1481,10 @@ public class OS
 
         if (_dumpInstructions)
         {
-            Console.WriteLine($" Pid:{currentProcess.PCB.Pid} {instruction} r{register1} r{register2}");
+            Console.WriteLine(" Pid:{0} {1} r{2} r{3}", CurrentProcess.ProcessControlBlock.Pid, instruction, register1, register2);
         }
 
-        var addr = memoryMgr.ProcessHeapAlloc(currentProcess, CPU.registers[register1]);
+        var addr = MemoryMgr.ProcessHeapAlloc(CurrentProcess, CPU.registers[register1]);
 
         CPU.registers[register2] = addr;
     }
@@ -1467,16 +1498,19 @@ public class OS
     public void FreeMemory()
     {
         //get the instruction and make sure we should be here
-        var instruction = (InstructionType)memoryMgr[currentProcess.PCB.Pid, CPU.InstructionPointer];
+        var instruction = (InstructionType)MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer];
         Debug.Assert(InstructionType.FreeMemory == instruction);
 
         //move to the param containing the register
         CPU.InstructionPointer++;
         var register1 = FetchUIntAndMove(); //address of memory
 
-        if (_dumpInstructions) {Console.WriteLine(" Pid:{0} {1} r{2}", currentProcess.PCB.Pid, instruction, register1);}
+        if (_dumpInstructions)
+        {
+            Console.WriteLine(" Pid:{0} {1} r{2}", CurrentProcess.ProcessControlBlock.Pid, instruction, register1);
+        }
 
-        memoryMgr.ProcessHeapFree(currentProcess, CPU.registers[register1]);
+        MemoryMgr.ProcessHeapFree(CurrentProcess, CPU.registers[register1]);
     }
 
 
@@ -1490,13 +1524,13 @@ public class OS
         CPU.StackPointer -= 4;
 
         //Are we blowing the stack?
-        if (CPU.StackPointer < currentProcess.PCB.ProcessMemorySize - 1 - currentProcess.PCB.StackSize)
+        if (CPU.StackPointer < CurrentProcess.ProcessControlBlock.ProcessMemorySize - 1 - CurrentProcess.ProcessControlBlock.StackSize)
         {
-            throw new StackException(currentProcess.PCB.Pid, currentProcess.PCB.ProcessMemorySize - 1 - currentProcess.PCB.StackSize - CPU.StackPointer);
-
+            throw new StackException(CurrentProcess.ProcessControlBlock.Pid,
+                CurrentProcess.ProcessControlBlock.ProcessMemorySize - 1 - CurrentProcess.ProcessControlBlock.StackSize - CPU.StackPointer);
         }
 
-        memoryMgr.SetUIntAt(processid, CPU.StackPointer, avalue);
+        MemoryMgr.SetUIntAt(processid, CPU.StackPointer, avalue);
     }
 
     /// <summary>
@@ -1506,8 +1540,8 @@ public class OS
     /// <returns>the uint from the stack</returns>
     public uint StackPop(uint processid)
     {
-        var retVal = memoryMgr.GetUIntFrom(processid, CPU.StackPointer);
-        memoryMgr.SetMemoryOfProcess(processid, CPU.StackPointer, 4, 0);
+        var retVal = MemoryMgr.GetUIntFrom(processid, CPU.StackPointer);
+        MemoryMgr.SetMemoryOfProcess(processid, CPU.StackPointer, 4, 0);
         CPU.StackPointer += 4;
         return retVal;
     }

@@ -5,11 +5,15 @@ using System.IO;
 using System.Text;
 using System.Xml;
 using System.Xml.Serialization;
+using TinyOSCore.Core;
+using TinyOSCore.Cpu;
+using TinyOSCore.Exceptions;
+using Process = TinyOSCore.Core.Process;
 
-namespace TinyOSCore;
+namespace TinyOSCore.MemoryManagement;
 
 /// <summary>
-///     The MemoryManager for the <see cref="OS" />.   All memory accesses by a <see cref="TinyOSCore.Process" />
+///     The MemoryManager for the <see cref="OS" />.   All memory accesses by a <see cref="Core.Process" />
 ///     go through this class.
 /// </summary>
 /// <example>
@@ -22,16 +26,10 @@ public class MemoryManager
     /// </summary>
     private static int _memoryClearInt;
 
-    /// <summary>
-    ///     Total ammount of addressable memory.  This is set in the Constructor.
-    ///     Once set, it is readonly
-    /// </summary>
-    public uint VirtualMemSize { get; }
-
-    private readonly ArrayList _pageTable;
-
     //BitArray freePhysicalPages = new BitArray((int)(CPU.physicalMemory.Length/CPU.pageSize), true);
     private readonly bool[] _freePhysicalPages = new bool[(int)(CPU.physicalMemory.Length / CPU.pageSize)];
+
+    private readonly ArrayList _pageTable;
 
     /// <summary>
     /// </summary>
@@ -47,7 +45,7 @@ public class MemoryManager
         // Size of memory must be a factor of CPU.pageSize
         // This was asserted when the CPU initialized memory
         //
-        // var physicalpages = (uint)(CPU.physicalMemory.Length / CPU.pageSize);
+        var physicalpages = (uint)(CPU.physicalMemory.Length / CPU.pageSize);
         var addressablepages = VirtualMemSize / CPU.pageSize;
 
         _pageTable = new ArrayList((int)addressablepages);
@@ -98,27 +96,31 @@ public class MemoryManager
             foreach (MemoryPage page in _pageTable)
             {
                 // Do we still need pages?
-                if (totalPagesNeeded > 0)
-                {
-                    // If this page is assigned to the OS, take it
-                    if (page.SharedMemoryRegion == 0)
-                    {
-                        // Now assign it to us
-                        page.SharedMemoryRegion = sharedRegions;
-                        totalPagesNeeded--;
-                        if (totalPagesNeeded % pagesPerRegion == 0)
-                        {
-                            sharedRegions--;
-                        }
-                    }
-                }
-                else //We have all we need
+                if (totalPagesNeeded <= 0)
                 {
                     break;
+                }
+
+                // If this page is assigned to the OS, take it
+                if (page.SharedMemoryRegion == 0)
+                {
+                    // Now assign it to us
+                    page.SharedMemoryRegion = sharedRegions;
+                    totalPagesNeeded--;
+                    if (totalPagesNeeded % pagesPerRegion == 0)
+                    {
+                        sharedRegions--;
+                    }
                 }
             }
         }
     }
+
+    /// <summary>
+    ///     Total ammount of addressable memory.  This is set in the Constructor.
+    ///     Once set, it is readonly
+    /// </summary>
+    public uint VirtualMemSize { get; }
 
     /// <summary>
     ///     Public accessor method to make Virtual Memory look like an array
@@ -150,6 +152,7 @@ public class MemoryManager
     {
         // Round up to the nearest page boundary
         var pagesRequested = BytesToPages(bytesRequested);
+        uint addrStart = 0;
 
         //
         // Finds n *Contiguous* Pages
@@ -159,16 +162,16 @@ public class MemoryManager
         var potentialPages = new ArrayList();
 
         // Look through all the pages in our heap
-        for (var i = 0; i < p.PCB.HeapPageTable.Count; i++)
+        for (var i = 0; i < p.ProcessControlBlock.HeapPageTable.Count; i++)
         {
             // The pages must be contiguous
-            var contiguous = true;
+            var bContiguous = true;
 
             //From this start page, check for contiguous free pages nearby
-            var startPage = (MemoryPage)p.PCB.HeapPageTable[i];
+            var startPage = (MemoryPage)p.ProcessControlBlock.HeapPageTable[i];
 
             //Is this page, and x ahead of it free?
-            if (startPage is { heapAllocationAddr: 0 })
+            if (startPage is { HeapAllocationAddr: 0 })
             {
                 potentialPages.Clear();
                 potentialPages.Add(startPage);
@@ -177,24 +180,24 @@ public class MemoryManager
                 for (var j = 1; j < pagesRequested; j++)
                 {
                     // Have we walked past the end of the heap?
-                    if (i + j >= p.PCB.HeapPageTable.Count)
+                    if (i + j >= p.ProcessControlBlock.HeapPageTable.Count)
                     {
-                        throw new HeapException(p.PCB.Pid, pagesRequested * CPU.pageSize);
+                        throw new HeapException(p.ProcessControlBlock.Pid, pagesRequested * CPU.pageSize);
                     }
 
-                    var nextPage = (MemoryPage)p.PCB.HeapPageTable[i + j];
-                    if (nextPage is { heapAllocationAddr: 0 })
+                    var nextPage = (MemoryPage)p.ProcessControlBlock.HeapPageTable[i + j];
+                    if (nextPage is { HeapAllocationAddr: 0 })
                     {
                         potentialPages.Add(nextPage);
                     }
                     else
                     {
-                        contiguous = false;
+                        bContiguous = false;
                     }
                 }
 
                 // If we make it here, we've found enough contiguous pages, break and continue
-                if (contiguous)
+                if (bContiguous)
                 {
                     break;
                 }
@@ -204,23 +207,18 @@ public class MemoryManager
         // Did we not find enough pages?
         if (potentialPages.Count != pagesRequested)
         {
-            throw new HeapException(p.PCB.Pid, pagesRequested * CPU.pageSize);
+            throw new HeapException(p.ProcessControlBlock.Pid, pagesRequested * CPU.pageSize);
         }
 
         // Mark each page with the address of the original alloc 
         // so we can Free them later
-        if (potentialPages[0] != null)
+        addrStart = ((MemoryPage)potentialPages[0]).AddrProcessIndex;
+        foreach (MemoryPage page in potentialPages)
         {
-            var addrStart = ((MemoryPage)potentialPages[0]).addrProcessIndex;
-            foreach (MemoryPage page in potentialPages)
-            {
-                page.heapAllocationAddr = addrStart;
-            }
-
-            return addrStart;
+            page.HeapAllocationAddr = addrStart;
         }
 
-        throw new Exception("Invalid page allocation");
+        return addrStart;
     }
 
     /// <summary>
@@ -232,11 +230,11 @@ public class MemoryManager
     public uint ProcessHeapFree(Process p, uint startAddr)
     {
         uint pageCount = 0;
-        foreach (MemoryPage page in p.PCB.HeapPageTable)
+        foreach (MemoryPage page in p.ProcessControlBlock.HeapPageTable)
         {
-            if (page.heapAllocationAddr == startAddr)
+            if (page.HeapAllocationAddr == startAddr)
             {
-                page.heapAllocationAddr = 0;
+                page.HeapAllocationAddr = 0;
                 pageCount++;
             }
         }
@@ -249,23 +247,24 @@ public class MemoryManager
         //memoryClearInt++;
 
         _memoryClearInt = 0;
-        SetMemoryOfProcess(p.PCB.Pid, startAddr, pageCount * CPU.pageSize, (byte)_memoryClearInt);
+        SetMemoryOfProcess(p.ProcessControlBlock.Pid, startAddr, pageCount * CPU.pageSize, (byte)_memoryClearInt);
         return 0;
     }
 
     /// <summary>
     ///     Adds all the pages allocated to a Process's heap to a PCB specific table of memory pages
     /// </summary>
-    /// <param name="p">The Process</param>
-    public void CreateHeapTableForProcess(Process p)
+    /// <param name="process">The Process</param>
+    public void CreateHeapTableForProcess(Process process)
     {
         foreach (MemoryPage page in _pageTable)
         {
-            if (page.pidOwner == p.PCB.Pid)
+            if (page.PidOwner == process.ProcessControlBlock.Pid)
             {
-                if (page.addrProcessIndex >= p.PCB.HeapAddrStart && page.addrProcessIndex < p.PCB.HeapAddrEnd)
+                if (page.AddrProcessIndex >= process.ProcessControlBlock.HeapAddrStart &&
+                    page.AddrProcessIndex < process.ProcessControlBlock.HeapAddrEnd)
                 {
-                    p.PCB.HeapPageTable.Add(page);
+                    process.ProcessControlBlock.HeapPageTable.Add(page);
                 }
             }
         }
@@ -340,13 +339,14 @@ public class MemoryManager
         foreach (MemoryPage page in _pageTable)
         {
             // If this process owns this page
-            if (page.pidOwner == processid)
+            if (page.PidOwner == processid)
             {
                 // If this page is responsible for the memory addresses we are interested in
-                if (processMemoryIndex >= page.addrProcessIndex && processMemoryIndex < page.addrProcessIndex + CPU.pageSize)
+                if (processMemoryIndex >= page.AddrProcessIndex &&
+                    processMemoryIndex < page.AddrProcessIndex + CPU.pageSize)
                 {
                     // Get the page offset
-                    var pageOffset = processMemoryIndex - page.addrProcessIndex;
+                    var pageOffset = processMemoryIndex - page.AddrProcessIndex;
                     return ProcessAddrToPhysicalAddrHelper(page, dirtyFlag, pageOffset);
                 }
             }
@@ -355,17 +355,16 @@ public class MemoryManager
             if (page.SharedMemoryRegion != 0)
             {
                 // Go through the list of owners and see if we are one...
-                for (var i = 0; i <= page.pidSharedOwnerList.Count - 1; i++)
+                for (var i = 0; i <= page.PidSharedOwnerList.Count - 1; i++)
                 {
                     // Do we own this page?
-                    if (page.pidSharedOwnerList != null && (uint)page.pidSharedOwnerList[i]! == processid)
+                    if ((uint)page.PidSharedOwnerList[i] == processid)
                     {
                         // Does this page handle this address?
-                        if (page.pidSharedProcessIndex?[i] != null 
-                            && processMemoryIndex >= (uint)page.pidSharedProcessIndex[i] 
-                            && processMemoryIndex < (uint)page.pidSharedProcessIndex[i] + CPU.pageSize)
+                        if (processMemoryIndex >= (uint)page.PidSharedProcessIndex[i] &&
+                            processMemoryIndex < (uint)page.PidSharedProcessIndex[i] + CPU.pageSize)
                         {
-                            var pageOffset = processMemoryIndex - (uint)page.pidSharedProcessIndex[i];
+                            var pageOffset = processMemoryIndex - (uint)page.PidSharedProcessIndex[i];
                             return ProcessAddrToPhysicalAddrHelper(page, dirtyFlag, pageOffset);
                         }
                     }
@@ -381,12 +380,12 @@ public class MemoryManager
     private uint ProcessAddrToPhysicalAddrHelper(MemoryPage page, bool dirtyFlag, uint pageOffset)
     {
         // Get the page offset
-        var virtualIndex = page.addrVirtual + pageOffset;
+        var virtualIndex = page.AddrVirtual + pageOffset;
 
         // Update Flags for this process
-        page.isDirty = dirtyFlag || page.isDirty;
-        page.accessCount++;
-        page.lastAccessed = DateTime.Now;
+        page.IsDirty = dirtyFlag || page.IsDirty;
+        page.AccessCount++;
+        page.LastAccessed = DateTime.Now;
 
         // Take this new "virtual" address (relative to all addressable memory)
         // and translate it to physical ram.  Page Faults may occur inside this next call.
@@ -402,26 +401,26 @@ public class MemoryManager
     /// <param name="page">The <see cref="MemoryPage" /> to reset</param>
     public void ResetPage(MemoryPage page)
     {
-        if (page.isValid)
+        if (page.IsValid)
         {
             // Make this page as availble in physical memory
-            var i = page.addrPhysical / CPU.pageSize;
+            var i = page.AddrPhysical / CPU.pageSize;
             Debug.Assert(i < _freePhysicalPages.Length); //has to be
             _freePhysicalPages[(int)i] = true;
         }
 
         //Reset to reasonable defaults
-        page.isDirty = false;
-        page.addrPhysical = 0;
-        page.pidOwner = 0;
-        page.pageFaults = 0;
-        page.accessCount = 0;
-        page.lastAccessed = DateTime.Now;
-        page.addrProcessIndex = 0;
-        page.heapAllocationAddr = 0;
+        page.IsDirty = false;
+        page.AddrPhysical = 0;
+        page.PidOwner = 0;
+        page.PageFaults = 0;
+        page.AccessCount = 0;
+        page.LastAccessed = DateTime.Now;
+        page.AddrProcessIndex = 0;
+        page.HeapAllocationAddr = 0;
 
         // Delete this page's swap file
-        var filename = Environment.CurrentDirectory + "/page" + page.pageNumber + "." + page.addrVirtual + ".xml";
+        var filename = Environment.CurrentDirectory + "/page" + page.PageNumber + "." + page.AddrVirtual + ".xml";
         File.Delete(filename);
     }
 
@@ -432,10 +431,10 @@ public class MemoryManager
     /// <returns></returns>
     public uint VirtualAddrToPhysical(MemoryPage page, uint virtualIndex)
     {
-        if (page.isValid == false)
+        if (page.IsValid == false)
         {
-            var i = 0;
-            for (; i < _freePhysicalPages.Length; i++)
+            int i;
+            for (i = 0; i < _freePhysicalPages.Length; i++)
             {
                 if (_freePhysicalPages[i])
                 {
@@ -453,13 +452,18 @@ public class MemoryManager
                 MemoryPage currentVictim = null;
                 foreach (MemoryPage possibleVictim in _pageTable)
                 {
-                    if (!page.Equals(possibleVictim) && possibleVictim.isValid)
+                    if (!page.Equals(possibleVictim) && possibleVictim.IsValid)
                     {
-                        if (currentVictim == null) currentVictim = possibleVictim;
+                        if (currentVictim == null)
+                        {
+                            currentVictim = possibleVictim;
+                        }
 
                         // If this is the least accessed Memory Page we've found so far
-                        if (possibleVictim.lastAccessed < currentVictim.lastAccessed)
+                        if (possibleVictim.LastAccessed < currentVictim.LastAccessed)
+                        {
                             currentVictim = possibleVictim;
+                        }
                     }
                 }
 
@@ -469,21 +473,21 @@ public class MemoryManager
                 SwapOut(currentVictim);
 
                 // Take the physical address of this page
-                page.addrPhysical = currentVictim.addrPhysical;
+                page.AddrPhysical = currentVictim.AddrPhysical;
 
                 SwapIn(page);
             }
             else // no page fault
             {
                 // Map this page to free physical page "i"
-                page.addrPhysical = (uint)(i * CPU.pageSize);
+                page.AddrPhysical = (uint)(i * CPU.pageSize);
                 SwapIn(page);
             }
         }
 
         // Adjust the physical address with pageOffset from a page boundary
         var pageOffset = virtualIndex % CPU.pageSize;
-        var physicalIndex = page.addrPhysical + pageOffset;
+        var physicalIndex = page.AddrPhysical + pageOffset;
         return physicalIndex;
     }
 
@@ -506,22 +510,25 @@ public class MemoryManager
     {
         foreach (MemoryPage page in _pageTable)
         {
-            if (page.pidOwner == pid)
+            if (page.PidOwner == pid)
             {
-                if (page.isValid) SetMemoryOfProcess(pid, page.addrProcessIndex, CPU.pageSize, 0);
+                if (page.IsValid)
+                {
+                    SetMemoryOfProcess(pid, page.AddrProcessIndex, CPU.pageSize, 0);
+                }
+
                 ResetPage(page);
             }
 
             if (page.SharedMemoryRegion != 0)
             {
-                var pidSharedOwnerListCount = page.pidSharedOwnerList.Count;
-                for (var i = 0; i <= pidSharedOwnerListCount- 1; i++)
+                for (var i = 0; i <= page.PidSharedOwnerList.Count - 1; i++)
                 {
                     // Do we own this page?
-                    if (page.pidSharedOwnerList?[i] != null && (uint)page.pidSharedOwnerList[i] == pid)
+                    if ((uint)page.PidSharedOwnerList[i] == pid)
                     {
-                        page.pidSharedOwnerList.RemoveAt(i);
-                        page.pidSharedProcessIndex.RemoveAt(i);
+                        page.PidSharedOwnerList.RemoveAt(i);
+                        page.PidSharedProcessIndex.RemoveAt(i);
                         break;
                     }
                 }
@@ -560,8 +567,10 @@ public class MemoryManager
         //Find the max address used by this process (a free place to map this memory to)
         foreach (MemoryPage page in _pageTable)
         {
-            if (page.pidOwner == pid)
-                addrProcessIndex = Math.Max(page.addrProcessIndex, addrProcessIndex);
+            if (page.PidOwner == pid)
+            {
+                addrProcessIndex = Math.Max(page.AddrProcessIndex, addrProcessIndex);
+            }
         }
 
         //Add one more page, to get the address of where to map the Shared Memory Region 
@@ -576,14 +585,13 @@ public class MemoryManager
             {
                 if (page.SharedMemoryRegion == memoryRegion)
                 {
-                    page.pidSharedOwnerList.Add(pid);
-                    page.pidSharedProcessIndex.Add(addrProcessIndex);
+                    page.PidSharedOwnerList.Add(pid);
+                    page.PidSharedProcessIndex.Add(addrProcessIndex);
                     addrProcessIndex += CPU.pageSize;
                     pagesNeeded--;
                 }
             }
-            else
-                // We've got enough pages...
+            else       // We've got enough pages...
             {
                 break;
             }
@@ -609,17 +617,17 @@ public class MemoryManager
             {
                 // If this page is assigned to the OS, 
                 // and not a SharedMemoryRegion and take it
-                if (page.pidOwner == 0 && page.SharedMemoryRegion == 0)
+                if (page.PidOwner == 0 && page.SharedMemoryRegion == 0)
                 {
                     // Now assign it to us
-                    page.pidOwner = pid;
-                    page.addrProcessIndex = addrProcessIndex;
+                    page.PidOwner = pid;
+                    page.AddrProcessIndex = addrProcessIndex;
                     addrProcessIndex += CPU.pageSize;
                     pagesNeeded--;
                 }
             }
             else
-                // We've got enough pages...
+            // We've got enough pages...
             {
                 break;
             }
@@ -628,8 +636,7 @@ public class MemoryManager
         // Did we go through the whole pageTable and not have enough memory?
         if (pagesNeeded > 0)
         {
-            Console.WriteLine("OUT OF MEMORY: Process {0} requested {1} more bytes than were available!", pid,
-                pagesNeeded * CPU.pageSize);
+            Console.WriteLine($"OUT OF MEMORY: Process {pid} requested {pagesNeeded * CPU.pageSize} more bytes than were available!");
             Environment.Exit(1);
         }
     }
@@ -640,14 +647,13 @@ public class MemoryManager
     /// <param name="victim">The <see cref="MemoryPage" /> to be swapped</param>
     public void SwapOut(MemoryPage victim)
     {
-        if (victim.isDirty)
+        if (victim.IsDirty)
         {
             // Generate a filename based on address and page number
-            var filename = Environment.CurrentDirectory + "/page" + victim.pageNumber + "-" + victim.addrVirtual +
-                           ".xml";
+            var filename = $"{Environment.CurrentDirectory}/page{victim.PageNumber}-{victim.AddrVirtual}.xml";
 
-//				IFormatter ser = new BinaryFormatter();
-//				Stream writer = new FileStream(filename, FileMode.Create);
+            //				IFormatter ser = new BinaryFormatter();
+            //				Stream writer = new FileStream(filename, FileMode.Create);
 
             var ser = new XmlSerializer(typeof(MemoryPageValue));
             Stream fs = new FileStream(filename, FileMode.Create);
@@ -659,13 +665,13 @@ public class MemoryManager
             var bytes = new byte[CPU.pageSize];
             for (var i = 0; i < CPU.pageSize; i++)
             {
-                bytes[i] = CPU.physicalMemory[victim.addrPhysical + i];
+                bytes[i] = CPU.physicalMemory[victim.AddrPhysical + i];
             }
 
             // Copy details from the MemoryPage to the MemoryPageValue
-            pageValue.memory = bytes;
-            pageValue.accessCount = victim.accessCount;
-            pageValue.lastAccessed = victim.lastAccessed;
+            pageValue.Memory1 = bytes;
+            pageValue.AccessCount = victim.AccessCount;
+            pageValue.LastAccessed = victim.LastAccessed;
 
             //Console.WriteLine("Swapping out page {0} at physical memory {1}",victim.pageNumber, victim.addrPhysical);
 
@@ -677,7 +683,7 @@ public class MemoryManager
             fs.Close();
         }
 
-        victim.isValid = false;
+        victim.IsValid = false;
     }
 
     /// <summary>
@@ -687,8 +693,8 @@ public class MemoryManager
     public void SwapIn(MemoryPage winner)
     {
         // Generate a filename based on address and page number
-        var filename = Environment.CurrentDirectory + "/page" + winner.pageNumber + "-" + winner.addrVirtual + ".xml";
-        if (File.Exists(filename) && winner.isValid == false)
+        var filename = Environment.CurrentDirectory + "/page" + winner.PageNumber + "-" + winner.AddrVirtual + ".xml";
+        if (File.Exists(filename) && winner.IsValid == false)
         {
             //BinaryFormatter ser = new BinaryFormatter();
             //Stream reader = new FileStream(filename, FileMode.Open);
@@ -703,21 +709,15 @@ public class MemoryManager
             // Copy the bytes from Physical Memory so we don't pageFault in a Fault Hander
             for (var i = 0; i < CPU.pageSize; i++)
             {
-                if (pageValue != null)
-                {
-                    CPU.physicalMemory[winner.addrPhysical + i] = pageValue.memory[i];
-                }
+                CPU.physicalMemory[winner.AddrPhysical + i] = pageValue.Memory1[i];
             }
 
             //Console.WriteLine("Swapping in page {0} at physical memory {1}",winner.pageNumber, winner.addrPhysical);
 
-            if (pageValue != null)
-            {
-                winner.accessCount = pageValue.accessCount;
-                winner.lastAccessed = pageValue.lastAccessed;
-            }
+            winner.AccessCount = pageValue.AccessCount;
+            winner.LastAccessed = pageValue.LastAccessed;
 
-//            pageValue = null;
+            pageValue = null;
 
             reader.Close();
             fs.Close();
@@ -725,8 +725,8 @@ public class MemoryManager
         }
 
         // We are now in memory and we were involved in Page Fault
-        winner.isValid = true;
-        winner.pageFaults++;
+        winner.IsValid = true;
+        winner.PageFaults++;
     }
 
     /// <summary>
@@ -740,242 +740,12 @@ public class MemoryManager
         uint totalPageFaults = 0;
         foreach (MemoryPage page in _pageTable)
         {
-            if (page.pidOwner == p.PCB.Pid) totalPageFaults += page.pageFaults;
+            if (page.PidOwner == p.ProcessControlBlock.Pid)
+            {
+                totalPageFaults += page.PageFaults;
+            }
         }
 
         return totalPageFaults;
-    }
-
-    /// <summary>
-    ///     Represents an entry in the Page Table.  MemoryPages (or "Page Table Entries")
-    ///     are created once and never destroyed, their values are just reassigned
-    /// </summary>
-    public class MemoryPage
-    {
-        /// <summary>
-        ///     The address in addressable space this page is responsbile for
-        /// </summary>
-        public readonly uint addrVirtual;
-
-        /// <summary>
-        ///     The number this page is in addressable Memory.  Set once and immutable
-        /// </summary>
-        public readonly uint pageNumber;
-
-        /// <summary>
-        ///     For aging and swapping: How many times has this page's address range been accessed?
-        /// </summary>
-        public uint accessCount;
-
-        /// <summary>
-        ///     This is only valid when
-        ///     pidOwner != 0 and isValid == true
-        ///     meaning the page is actually mapped and present
-        /// </summary>
-        public uint addrPhysical;
-
-        /// <summary>
-        ///     The address in Process space this page is responsible for
-        /// </summary>
-        public uint addrProcessIndex;
-
-        /// <summary>
-        ///     The process address that originally allocated this page.  Kept so we can free that page(s) later.
-        /// </summary>
-        public uint heapAllocationAddr;
-
-        /// <summary>
-        ///     Has the page been changes since it was last swapped in from Disk?
-        /// </summary>
-        public bool isDirty;
-
-        /// <summary>
-        ///     Is the page in memory now?
-        /// </summary>
-        public bool isValid;
-
-        /// <summary>
-        ///     For aging and swapping: When was this page last accessed?
-        /// </summary>
-        public DateTime lastAccessed = DateTime.Now;
-
-        /// <summary>
-        ///     For statistics: How many times has this page been involved in a pageFault?
-        /// </summary>
-        public uint pageFaults;
-
-        /// <summary>
-        ///     The process that is currently using this apge
-        /// </summary>
-        public uint pidOwner;
-
-        /// <summary>
-        ///     One of two parallel arrays, one of shared owners of this page, one of shared process indexes of this page
-        /// </summary>
-        public ArrayList pidSharedOwnerList = new ArrayList();
-
-        /// <summary>
-        ///     One of two parallel arrayz, one of shared owners of this page, one of shared process indexes of this page
-        /// </summary>
-        public ArrayList pidSharedProcessIndex = new ArrayList();
-
-        /// <summary>
-        ///     The number of the shared memory region this MemoryPage is mapped to
-        /// </summary>
-        public uint SharedMemoryRegion { get; set; }
-
-        /// <summary>
-        ///     Only public constructor for a Memory Page and is only called once
-        ///     in the <see cref="MemoryManager" /> constructor
-        /// </summary>
-        /// <param name="initAddrVirtual">The address in addressable memory this page is responsible for</param>
-        /// <param name="isValidFlag">Is this page in memory right now?</param>
-        public MemoryPage(uint initAddrVirtual, bool isValidFlag)
-        {
-            isValid = isValidFlag;
-            if (isValid)
-                addrPhysical = initAddrVirtual;
-            addrVirtual = initAddrVirtual;
-            pageNumber = addrVirtual / CPU.pageSize;
-        }
-    }
-
-    /// <summary>
-    ///     Represents the actual values in memory that a MemoryPage points to.
-    ///     MemoryPageValue is serialized to disk, currently as XML, in <see cref="SwapOut" />.
-    /// </summary>
-    [Serializable]
-    public class MemoryPageValue
-    {
-        /// <summary>
-        ///     For aging and swapping: How many times has this page's address range been accessed?
-        /// </summary>
-        public uint accessCount;
-
-        /// <summary>
-        ///     For aging and swapping: When was this page last accessed?
-        /// </summary>
-        public DateTime lastAccessed = DateTime.Now;
-
-        /// <summary>
-        ///     The array of bytes holding the value of memory for this page
-        /// </summary>
-        [XmlArray(ElementName = "byte", Namespace = "http://www.hanselman.com")]
-        public byte[] memory = new byte[CPU.pageSize];
-    }
-}
-
-/// <summary>
-///     Memory Protection: MemoryExceptions are constructed and thrown
-///     when a <see cref="Process" /> accessed memory that doesn't belong to it.
-/// </summary>
-public class MemoryException : Exception
-{
-    /// <summary>
-    ///     Process ID
-    /// </summary>
-    public uint pid;
-
-    /// <summary>
-    ///     Process address in question
-    /// </summary>
-    public uint processAddress;
-
-    /// <summary>
-    ///     Public Constructor for a Memory Exception
-    /// </summary>
-    /// <param name="pidIn">Process ID</param>
-    /// <param name="addrIn">Process address</param>
-    public MemoryException(uint pidIn, uint addrIn)
-    {
-        pid = pidIn;
-        processAddress = addrIn;
-    }
-
-    /// <summary>
-    ///     Pretty printing for MemoryExceptions
-    /// </summary>
-    /// <returns>Formatted string about the MemoryException</returns>
-    public override string ToString()
-    {
-        return string.Format("Process {0} tried to access memory at address {1} and will be terminated! ", pid,
-            processAddress);
-    }
-}
-
-/// <summary>
-///     Memory Protection: MemoryExceptions are constructed and thrown
-///     when a <see cref="Process" /> accessed memory that doesn't belong to it.
-/// </summary>
-public class StackException : Exception
-{
-    /// <summary>
-    ///     Process ID
-    /// </summary>
-    public uint pid;
-
-    /// <summary>
-    ///     Num of Bytes more than the stack could handle
-    /// </summary>
-    public uint tooManyBytes;
-
-    /// <summary>
-    ///     Public Constructor for a Memory Exception
-    /// </summary>
-    /// <param name="pidIn">Process ID</param>
-    /// <param name="tooManyBytesIn">Process address</param>
-    public StackException(uint pidIn, uint tooManyBytesIn)
-    {
-        pid = pidIn;
-        tooManyBytes = tooManyBytesIn;
-    }
-
-    /// <summary>
-    ///     Pretty printing for MemoryExceptions
-    /// </summary>
-    /// <returns>Formatted string about the MemoryException</returns>
-    public override string ToString()
-    {
-        return string.Format("Process {0} tried to push {1} too many bytes on to the stack and will be terminated! ",
-            pid, tooManyBytes);
-    }
-}
-
-/// <summary>
-///     Memory Protection: MemoryExceptions are constructed and thrown
-///     when a <see cref="Process" /> accessed memory that doesn't belong to it.
-/// </summary>
-public class HeapException : Exception
-{
-    /// <summary>
-    ///     Process ID
-    /// </summary>
-    public uint pid;
-
-    /// <summary>
-    ///     Num of Bytes more than the stack could handle
-    /// </summary>
-    public uint tooManyBytes;
-
-    /// <summary>
-    ///     Public Constructor for a Memory Exception
-    /// </summary>
-    /// <param name="pidIn">Process ID</param>
-    /// <param name="tooManyBytesIn">Process address</param>
-    public HeapException(uint pidIn, uint tooManyBytesIn)
-    {
-        pid = pidIn;
-        tooManyBytes = tooManyBytesIn;
-    }
-
-    /// <summary>
-    ///     Pretty printing for MemoryExceptions
-    /// </summary>
-    /// <returns>Formatted string about the MemoryException</returns>
-    public override string ToString()
-    {
-        return string.Format(
-            "Process {0} tried to alloc {1} bytes more from the heap than were free and will be terminated! ", pid,
-            tooManyBytes);
     }
 }

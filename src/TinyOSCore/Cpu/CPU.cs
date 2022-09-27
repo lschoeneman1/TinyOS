@@ -1,9 +1,44 @@
+// ------------------------------------------------------------------------------
+// <copyright from='2002' to='2002' company='Scott Hanselman'>
+//    Copyright (c) Scott Hanselman. All Rights Reserved.   
+// </copyright> 
+// ------------------------------------------------------------------------------
+//
+// Scott Hanselman's Tiny Academic Virtual CPU and OS
+// Copyright (c) 2002, Scott Hanselman (scott@hanselman.com)
+// All rights reserved.
+// 
+// A BSD License
+// Redistribution and use in source and binary forms, with or without modification,
+// are permitted provided that the following conditions are met:
+// 
+// Redistributions of source code must retain the above copyright notice, 
+// this list of conditions and the following disclaimer. 
+// Redistributions in binary form must reproduce the above copyright notice,
+// this list of conditions and the following disclaimer in the documentation 
+// and/or other materials provided with the distribution. 
+// Neither the name of Scott Hanselman nor the names of its contributors
+// may be used to endorse or promote products derived from this software without
+// specific prior written permission. 
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" 
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+// THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR 
+// PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS 
+// BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; 
+// LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE 
+// OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+// THE POSSIBILITY OF SUCH DAMAGE.
+//
+
 using System;
 using System.Collections;
 using System.Diagnostics;
+using TinyOSCore.Core;
+using TinyOSCore.Exceptions;
 
-
-namespace TinyOSCore;
+namespace TinyOSCore.Cpu;
 
 /// <summary>
 ///     CPU is never instanciated, but is "always" there...like a real CPU. :)  It holds <see cref="physicalMemory" />
@@ -26,6 +61,11 @@ public abstract class CPU
     public static uint clock;
 
     /// <summary>
+    ///     The CPU's reference to the <see cref="OS" />.  This is set by the <see cref="EntryPoint" />.
+    /// </summary>
+    public static OS theOS = null;
+
+    /// <summary>
     ///     Here is the actual array of bytes that contains the physical memory for this CPU.
     /// </summary>
     internal static byte[] physicalMemory;
@@ -40,11 +80,6 @@ public abstract class CPU
     ///     We have a Sign Flag and a Zero Flag in a <see cref="BitArray" />
     /// </summary>
     private static readonly BitArray BitFlagRegisters = new BitArray(2, false);
-
-    /// <summary>
-    ///     The CPU's reference to the <see cref="OS" />.  This is set by the <see cref="EntryPoint" />.
-    /// </summary>
-    public static OS TheOs { get; set; } = null;
 
     /// <summary>
     ///     Initialized our <see cref="physicalMemory" /> array that represents physical memory.  Should only be called once.
@@ -67,7 +102,7 @@ public abstract class CPU
 
 
     /// <summary>
-    ///     Takes the process id from the <see cref="OS.currentProcess" /> and the CPU's <see cref="InstructionPointer" /> and
+    ///     Takes the process id from the <see cref="OS.CurrentProcess" /> and the CPU's <see cref="InstructionPointer" /> and
     ///     gets the next <see cref="Instruction" /> from memory.  The <see cref="InstructionType" /> translates
     ///     via an array of <see cref="SystemCall" />s and retrives a <see cref="Delegate" /> from
     ///     <see cref="OpCodeToSysCall" />
@@ -76,7 +111,7 @@ public abstract class CPU
     public static void ExecuteNextOpCode()
     {
         // The opCode still is pointed to by CPU.ip, but the memory access is protected
-        OpCodeToSysCall((InstructionType)TheOs.memoryMgr[TheOs.currentProcess.PCB.Pid, InstructionPointer]);
+        OpCodeToSysCall((InstructionType)theOS.MemoryMgr[theOS.CurrentProcess.ProcessControlBlock.Pid, InstructionPointer]);
         clock++;
     }
 
@@ -89,60 +124,60 @@ public abstract class CPU
     {
         #region System Calls Map
 
-        SystemCall[] sysCalls =
+        SystemCall[] systemCalls =
         {
-            TheOs.Noop, //0
+            theOS.Noop, //0
 
-            TheOs.Incr, //1
-            TheOs.Addi, //2
-            TheOs.Addr, //3
-            TheOs.Pushr, //4
-            TheOs.Pushi, //5
+            theOS.Incr, //1
+            theOS.Addi, //2
+            theOS.Addr, //3
+            theOS.Pushr, //4
+            theOS.Pushi, //5
 
-            TheOs.Movi, //6
-            TheOs.Movr, //7
-            TheOs.Movmr, //8
-            TheOs.Movrm, //9
-            TheOs.Movmm, //10
+            theOS.Movi, //6
+            theOS.Movr, //7
+            theOS.Movmr, //8
+            theOS.Movrm, //9
+            theOS.Movmm, //10
 
-            TheOs.Printr, //11
-            TheOs.Printm, //12
-            TheOs.Jmp, //13
-            TheOs.Cmpi, //14
-            TheOs.Cmpr, //15
+            theOS.Printr, //11
+            theOS.Printm, //12
+            theOS.Jmp, //13
+            theOS.Cmpi, //14
+            theOS.Cmpr, //15
 
-            TheOs.Jlt, //16
-            TheOs.Jgt, //17
-            TheOs.Je, //18
-            TheOs.Call, //19
-            TheOs.Callm, //20
+            theOS.Jlt, //16
+            theOS.Jgt, //17
+            theOS.Je, //18
+            theOS.Call, //19
+            theOS.Callm, //20
 
-            TheOs.Ret, //21
-            TheOs.Alloc, //22
-            TheOs.AcquireLock, //23
-            TheOs.ReleaseLock, //24
-            TheOs.Sleep, //25
+            theOS.Ret, //21
+            theOS.Alloc, //22
+            theOS.AcquireLock, //23
+            theOS.ReleaseLock, //24
+            theOS.Sleep, //25
 
-            TheOs.SetPriority, //26
-            TheOs.Exit, //27
-            TheOs.FreeMemory, //28
-            TheOs.MapSharedMem, //29
-            TheOs.SignalEvent, //30
+            theOS.SetPriority, //26
+            theOS.Exit, //27
+            theOS.FreeMemory, //28
+            theOS.MapSharedMem, //29
+            theOS.SignalEvent, //30
 
-            TheOs.WaitEvent, //31
-            TheOs.Input, //32
-            TheOs.MemoryClear, //33
-            TheOs.TerminateProcess, //34
-            TheOs.Popr, //35
+            theOS.WaitEvent, //31
+            theOS.Input, //32
+            theOS.MemoryClear, //33
+            theOS.TerminateProcess, //34
+            theOS.Popr, //35
 
-            TheOs.Popm //36
+            theOS.Popm //36
         };
 
         #endregion
 
         Debug.Assert(opCode >= InstructionType.Incr && opCode <= InstructionType.Popm);
 
-        var call = sysCalls[(int)opCode];
+        var call = systemCalls[(int)opCode];
         call();
     }
 
@@ -194,7 +229,7 @@ public abstract class CPU
     /// </summary>
     public static void DumpRegisters()
     {
-        if (!bool.Parse(EntryPoint.Configuration["DumpRegisters"]))
+        if (bool.Parse(EntryPoint.Configuration["DumpRegisters"]) == false)
         {
             return;
         }
@@ -202,7 +237,7 @@ public abstract class CPU
         Console.WriteLine($"CPU Registers: r1 {registers[1],-8:G}          r6  {registers[6],-8:G}");
         Console.WriteLine($"               r2 {registers[2],-8:G}          r7  {registers[7],-8:G}");
         Console.WriteLine($"               r3 {registers[3],-8:G}    (pid) r8  {registers[8],-8:G}");
-        Console.WriteLine($"               r4 {registers[4],-8:G}   (data) r9  {registers[9],-8:G}");
+        Console.WriteLine($"               r4 {registers[4],-8:G}   (data) r9 . {registers[9],-8:G}");
         Console.WriteLine($"               r5 {registers[5],-8:G}     (sp) r10 {registers[10]}");
         Console.WriteLine($"               sf {SignFlag,-8:G}          ip  {InstructionPointer}");
         Console.WriteLine($"               zf {ZeroFlag,-8:G}      ");
@@ -213,12 +248,12 @@ public abstract class CPU
     /// </summary>
     public static void DumpInstruction()
     {
-        if (!bool.Parse(EntryPoint.Configuration["DumpInstruction"]))
+        if (bool.Parse(EntryPoint.Configuration["DumpInstruction"]) == false)
         {
             return;
         }
 
-        Console.WriteLine($" Pid:{registers[8]} {(InstructionType)TheOs.memoryMgr[TheOs.currentProcess.PCB.Pid, InstructionPointer]} {(uint)TheOs.memoryMgr[TheOs.currentProcess.PCB.Pid, InstructionPointer]}");
+        Console.WriteLine($" Pid:{registers[8]} {(InstructionType)theOS.MemoryMgr[theOS.CurrentProcess.ProcessControlBlock.Pid, InstructionPointer]} {(uint)theOS.MemoryMgr[theOS.CurrentProcess.ProcessControlBlock.Pid, InstructionPointer]}");
     }
 
     /// <summary>
@@ -226,7 +261,7 @@ public abstract class CPU
     /// </summary>
     public static void DumpPhysicalMemory()
     {
-        if (!bool.Parse(EntryPoint.Configuration["DumpPhysicalMemory"]))
+        if (bool.Parse(EntryPoint.Configuration["DumpPhysicalMemory"]) == false)
         {
             return;
         }
@@ -236,7 +271,7 @@ public abstract class CPU
         {
             if (address == 0 || address % 16 == 0)
             {
-                Console.Write($"{Environment.NewLine}{address,-4:000} ");
+                Console.Write(Environment.NewLine + "{0,-4:000} ", address);
             }
 
             address++;
@@ -271,9 +306,8 @@ public abstract class CPU
     {
         fixed (byte* otherbytes = bytesIn)
         {
-            uint newUint = 0;
             var ut = (uint*)&otherbytes[0];
-            newUint = *ut;
+            var newUint = *ut;
             return newUint;
         }
     }

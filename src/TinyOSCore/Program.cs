@@ -1,6 +1,9 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using TinyOSCore.Core;
+using TinyOSCore.Cpu;
 
 namespace TinyOSCore;
 
@@ -23,7 +26,7 @@ public class Program
 
     /// <summary>
     ///     Spins through the <see cref="InstructionCollection" /> and creates an array of bytes
-    ///     that is then copied into Memory by <see cref="OS.CreateProcess" />
+    ///     that is then copied into Memory by <see cref="OS.createProcess" />
     /// </summary>
     /// <returns>Array of bytes representing the <see cref="Program" /> in memory</returns>
     public byte[] GetMemoryImage()
@@ -32,22 +35,20 @@ public class Program
 
         foreach (var instr in _instructions)
         {
+
             // Instructions are one byte
             instructionList.Add((byte)instr.OpCode);
 
             // Params are Four Bytes
-            if (instr.OpCodeParameter1 != uint.MaxValue)
+            if (instr.Param1 != uint.MaxValue)
             {
-                var paramBytes = CPU.UIntToBytes(instr.OpCodeParameter1);
-                foreach (var t in paramBytes)
-                {
-                    instructionList.Add(t);
-                }
+                var paramBytes = CPU.UIntToBytes(instr.Param1);
+                instructionList.AddRange(paramBytes);
             }
 
-            if (instr.OpCodeParameter2 != uint.MaxValue)
+            if (instr.Param2 != uint.MaxValue)
             {
-                var paramBytes = CPU.UIntToBytes(instr.OpCodeParameter2);
+                var paramBytes = CPU.UIntToBytes(instr.Param2);
                 foreach (var t in paramBytes)
                 {
                     instructionList.Add(t);
@@ -56,7 +57,7 @@ public class Program
         }
 
         // Create and array of bytes and return the instructions in it
-        //instructionList.TrimToSize();
+        instructionList.TrimExcess();
         var arrayInstr = new byte[instructionList.Count];
         instructionList.CopyTo(arrayInstr);
         return arrayInstr;
@@ -71,17 +72,15 @@ public class Program
     /// <returns>a new loaded Program</returns>
     public static Program LoadProgram(string fileName)
     {
-        using TextReader reader = File.OpenText(fileName);
         var instructions = new InstructionCollection();
-        var rawInstruction = reader.ReadLine();
-        while (rawInstruction != null)
+        var instructionLines = File.ReadAllLines(fileName);
+        foreach (var rawInstructionLine in instructionLines)
         {
-            instructions.Add(new Instruction(rawInstruction));
-            rawInstruction = reader.ReadLine();
+            instructions.Add(new Instruction(rawInstructionLine));
         }
-
+        
         var program = new Program(instructions);
-        reader.Close();
+        
         return program;
     }
 
@@ -90,7 +89,7 @@ public class Program
     /// </summary>
     public void DumpProgram()
     {
-        if (!bool.Parse(EntryPoint.Configuration["DumpProgram"]))
+        if (bool.Parse(EntryPoint.Configuration["DumpProgram"]) == false)
         {
             return;
         }
