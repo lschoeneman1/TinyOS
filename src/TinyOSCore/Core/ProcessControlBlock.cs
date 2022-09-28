@@ -7,7 +7,7 @@ namespace TinyOSCore.Core;
 ///     instance field initializers.  Maintains things like <see cref="Registers" /> and <see cref="ClockCycles" /> for
 ///     this
 ///     Process.
-///     Global Data Region at R9 and SP at R10 are set in <see cref="OS.createProcess" />
+///     Global Data Region at R9 and SP at R10 are set in <see cref="OS.CreateProcess" />
 /// </summary>
 public class ProcessControlBlock
 {

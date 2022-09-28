@@ -45,9 +45,9 @@ internal class EntryPoint
             var theOS = new OS(bytesOfVirtualMemory);
 
             // Let the CPU know about the OS
-            CPU.theOS = theOS;
+            CPU.TheOS = theOS;
 
-            Console.WriteLine("CPU has {0} bytes of physical memory", CPU.physicalMemory.Length);
+            Console.WriteLine("CPU has {0} bytes of physical memory", CPU.PhysicalMemory.Length);
             Console.WriteLine("OS  has {0} bytes of virtual (addressable) memory", theOS.MemoryMgr.VirtualMemSize);
 
             // For each file on the command line, load the program and create a process
@@ -56,7 +56,7 @@ internal class EntryPoint
                 if (File.Exists(args[i]))
                 {
                     var p = Program.LoadProgram(args[i]);
-                    var rp = theOS.createProcess(p, uint.Parse(Configuration["ProcessMemory"]));
+                    var rp = theOS.CreateProcess(p, uint.Parse(Configuration["ProcessMemory"]));
                     Console.WriteLine("Process id {0} has {1} bytes of process memory and {2} bytes of heap",
                         rp.ProcessControlBlock.Pid, Configuration["ProcessMemory"],
                         rp.ProcessControlBlock.HeapAddrEnd - rp.ProcessControlBlock.HeapAddrStart);

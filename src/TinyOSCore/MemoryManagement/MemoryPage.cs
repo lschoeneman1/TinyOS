@@ -97,6 +97,6 @@ public class MemoryPage
         }
 
         AddrVirtual = initAddrVirtual;
-        PageNumber = AddrVirtual / CPU.pageSize;
+        PageNumber = AddrVirtual / CPU.PageSize;
     }
 }

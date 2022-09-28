@@ -27,7 +27,7 @@ public class MemoryManager
     private static int _memoryClearInt;
 
     //BitArray freePhysicalPages = new BitArray((int)(CPU.physicalMemory.Length/CPU.pageSize), true);
-    private readonly bool[] _freePhysicalPages = new bool[(int)(CPU.physicalMemory.Length / CPU.pageSize)];
+    private readonly bool[] _freePhysicalPages = new bool[(int)(CPU.PhysicalMemory.Length / CPU.PageSize)];
 
     private readonly ArrayList _pageTable;
 
@@ -39,14 +39,14 @@ public class MemoryManager
         //
         // Find a size for addressableMemory that is on a page boundary
         //
-        VirtualMemSize = CPU.UtilRoundToBoundary(virtualMemSizeIn, CPU.pageSize);
+        VirtualMemSize = CPU.UtilRoundToBoundary(virtualMemSizeIn, CPU.PageSize);
 
         //
         // Size of memory must be a factor of CPU.pageSize
         // This was asserted when the CPU initialized memory
         //
-        var physicalpages = (uint)(CPU.physicalMemory.Length / CPU.pageSize);
-        var addressablepages = VirtualMemSize / CPU.pageSize;
+        var physicalpages = (uint)(CPU.PhysicalMemory.Length / CPU.PageSize);
+        var addressablepages = VirtualMemSize / CPU.PageSize;
 
         _pageTable = new ArrayList((int)addressablepages);
 
@@ -58,14 +58,14 @@ public class MemoryManager
 
         // For all off addressable memory...
         // Make the pages in physical and the pages that aren't in physical
-        for (uint i = 0; i < VirtualMemSize; i += CPU.pageSize)
+        for (uint i = 0; i < VirtualMemSize; i += CPU.PageSize)
         {
             // Mark the Pages that are in physical memory as "false" or "not free"
             MemoryPage p;
-            if (i < CPU.physicalMemory.Length)
+            if (i < CPU.PhysicalMemory.Length)
             {
                 p = new MemoryPage(i, true);
-                _freePhysicalPages[(int)(i / CPU.pageSize)] = false;
+                _freePhysicalPages[(int)(i / CPU.PageSize)] = false;
             }
             else
             {
@@ -82,7 +82,7 @@ public class MemoryManager
         var sharedRegions = uint.Parse(EntryPoint.Configuration["NumOfSharedMemoryRegions"]);
         if (sharedRegions > 0 && sharedRegionsSize > 0)
         {
-            var totalPagesNeeded = sharedRegions * sharedRegionsSize / CPU.pageSize;
+            var totalPagesNeeded = sharedRegions * sharedRegionsSize / CPU.PageSize;
             var pagesPerRegion = totalPagesNeeded / sharedRegions;
 
             // ForExample: 
@@ -133,12 +133,12 @@ public class MemoryManager
         get
         {
             var physicalIndex = ProcessAddrToPhysicalAddr(processid, processMemoryIndex, false);
-            return CPU.physicalMemory[physicalIndex];
+            return CPU.PhysicalMemory[physicalIndex];
         }
         set
         {
             var physicalIndex = ProcessAddrToPhysicalAddr(processid, processMemoryIndex, true);
-            CPU.physicalMemory[physicalIndex] = value;
+            CPU.PhysicalMemory[physicalIndex] = value;
         }
     }
 
@@ -182,7 +182,7 @@ public class MemoryManager
                     // Have we walked past the end of the heap?
                     if (i + j >= p.ProcessControlBlock.HeapPageTable.Count)
                     {
-                        throw new HeapException(p.ProcessControlBlock.Pid, pagesRequested * CPU.pageSize);
+                        throw new HeapException(p.ProcessControlBlock.Pid, pagesRequested * CPU.PageSize);
                     }
 
                     var nextPage = (MemoryPage)p.ProcessControlBlock.HeapPageTable[i + j];
@@ -207,7 +207,7 @@ public class MemoryManager
         // Did we not find enough pages?
         if (potentialPages.Count != pagesRequested)
         {
-            throw new HeapException(p.ProcessControlBlock.Pid, pagesRequested * CPU.pageSize);
+            throw new HeapException(p.ProcessControlBlock.Pid, pagesRequested * CPU.PageSize);
         }
 
         // Mark each page with the address of the original alloc 
@@ -247,7 +247,7 @@ public class MemoryManager
         //memoryClearInt++;
 
         _memoryClearInt = 0;
-        SetMemoryOfProcess(p.ProcessControlBlock.Pid, startAddr, pageCount * CPU.pageSize, (byte)_memoryClearInt);
+        SetMemoryOfProcess(p.ProcessControlBlock.Pid, startAddr, pageCount * CPU.PageSize, (byte)_memoryClearInt);
         return 0;
     }
 
@@ -343,7 +343,7 @@ public class MemoryManager
             {
                 // If this page is responsible for the memory addresses we are interested in
                 if (processMemoryIndex >= page.AddrProcessIndex &&
-                    processMemoryIndex < page.AddrProcessIndex + CPU.pageSize)
+                    processMemoryIndex < page.AddrProcessIndex + CPU.PageSize)
                 {
                     // Get the page offset
                     var pageOffset = processMemoryIndex - page.AddrProcessIndex;
@@ -362,7 +362,7 @@ public class MemoryManager
                     {
                         // Does this page handle this address?
                         if (processMemoryIndex >= (uint)page.PidSharedProcessIndex[i] &&
-                            processMemoryIndex < (uint)page.PidSharedProcessIndex[i] + CPU.pageSize)
+                            processMemoryIndex < (uint)page.PidSharedProcessIndex[i] + CPU.PageSize)
                         {
                             var pageOffset = processMemoryIndex - (uint)page.PidSharedProcessIndex[i];
                             return ProcessAddrToPhysicalAddrHelper(page, dirtyFlag, pageOffset);
@@ -404,7 +404,7 @@ public class MemoryManager
         if (page.IsValid)
         {
             // Make this page as availble in physical memory
-            var i = page.AddrPhysical / CPU.pageSize;
+            var i = page.AddrPhysical / CPU.PageSize;
             Debug.Assert(i < _freePhysicalPages.Length); //has to be
             _freePhysicalPages[(int)i] = true;
         }
@@ -480,13 +480,13 @@ public class MemoryManager
             else // no page fault
             {
                 // Map this page to free physical page "i"
-                page.AddrPhysical = (uint)(i * CPU.pageSize);
+                page.AddrPhysical = (uint)(i * CPU.PageSize);
                 SwapIn(page);
             }
         }
 
         // Adjust the physical address with pageOffset from a page boundary
-        var pageOffset = virtualIndex % CPU.pageSize;
+        var pageOffset = virtualIndex % CPU.PageSize;
         var physicalIndex = page.AddrPhysical + pageOffset;
         return physicalIndex;
     }
@@ -498,7 +498,7 @@ public class MemoryManager
     /// <returns>number of pages</returns>
     public static uint BytesToPages(uint bytes)
     {
-        return CPU.UtilRoundToBoundary(bytes, CPU.pageSize) / CPU.pageSize;
+        return CPU.UtilRoundToBoundary(bytes, CPU.PageSize) / CPU.PageSize;
         //return ((uint)(bytes / CPU.pageSize) + (uint)(bytes % CPU.pageSize));
     }
 
@@ -514,7 +514,7 @@ public class MemoryManager
             {
                 if (page.IsValid)
                 {
-                    SetMemoryOfProcess(pid, page.AddrProcessIndex, CPU.pageSize, 0);
+                    SetMemoryOfProcess(pid, page.AddrProcessIndex, CPU.PageSize, 0);
                 }
 
                 ResetPage(page);
@@ -560,7 +560,7 @@ public class MemoryManager
     public uint MapSharedMemoryToProcess(uint memoryRegion, uint pid)
     {
         var sharedRegionsSize = uint.Parse(EntryPoint.Configuration["SharedMemoryRegionSize"]);
-        var pagesNeeded = sharedRegionsSize / CPU.pageSize;
+        var pagesNeeded = sharedRegionsSize / CPU.PageSize;
 
         uint addrProcessIndex = 0;
 
@@ -574,7 +574,7 @@ public class MemoryManager
         }
 
         //Add one more page, to get the address of where to map the Shared Memory Region 
-        addrProcessIndex += CPU.pageSize;
+        addrProcessIndex += CPU.PageSize;
         var startAddrProcessIndex = addrProcessIndex;
 
         // Very inefficient: 
@@ -587,7 +587,7 @@ public class MemoryManager
                 {
                     page.PidSharedOwnerList.Add(pid);
                     page.PidSharedProcessIndex.Add(addrProcessIndex);
-                    addrProcessIndex += CPU.pageSize;
+                    addrProcessIndex += CPU.PageSize;
                     pagesNeeded--;
                 }
             }
@@ -622,7 +622,7 @@ public class MemoryManager
                     // Now assign it to us
                     page.PidOwner = pid;
                     page.AddrProcessIndex = addrProcessIndex;
-                    addrProcessIndex += CPU.pageSize;
+                    addrProcessIndex += CPU.PageSize;
                     pagesNeeded--;
                 }
             }
@@ -636,7 +636,7 @@ public class MemoryManager
         // Did we go through the whole pageTable and not have enough memory?
         if (pagesNeeded > 0)
         {
-            Console.WriteLine($"OUT OF MEMORY: Process {pid} requested {pagesNeeded * CPU.pageSize} more bytes than were available!");
+            Console.WriteLine($"OUT OF MEMORY: Process {pid} requested {pagesNeeded * CPU.PageSize} more bytes than were available!");
             Environment.Exit(1);
         }
     }
@@ -662,10 +662,10 @@ public class MemoryManager
             var pageValue = new MemoryPageValue();
 
             // Copy the bytes from Physical Memory so we don't pageFault in a Fault Hander
-            var bytes = new byte[CPU.pageSize];
-            for (var i = 0; i < CPU.pageSize; i++)
+            var bytes = new byte[CPU.PageSize];
+            for (var i = 0; i < CPU.PageSize; i++)
             {
-                bytes[i] = CPU.physicalMemory[victim.AddrPhysical + i];
+                bytes[i] = CPU.PhysicalMemory[victim.AddrPhysical + i];
             }
 
             // Copy details from the MemoryPage to the MemoryPageValue
@@ -707,9 +707,9 @@ public class MemoryManager
             var pageValue = (MemoryPageValue)ser.Deserialize(reader);
 
             // Copy the bytes from Physical Memory so we don't pageFault in a Fault Hander
-            for (var i = 0; i < CPU.pageSize; i++)
+            for (var i = 0; i < CPU.PageSize; i++)
             {
-                CPU.physicalMemory[winner.AddrPhysical + i] = pageValue.Memory1[i];
+                CPU.PhysicalMemory[winner.AddrPhysical + i] = pageValue.Memory1[i];
             }
 
             //Console.WriteLine("Swapping in page {0} at physical memory {1}",winner.pageNumber, winner.addrPhysical);

@@ -270,7 +270,7 @@ public class OS
             SaveCPUState();
 
             //Clear registers for testing
-            CPU.registers = new uint[12];
+            CPU.Registers = new uint[12];
         }
 
         CurrentProcess = null;
@@ -365,12 +365,12 @@ public class OS
     }
 
     /// <summary>
-    ///     Called on a context switch. Copy the CPU's <see cref="CPU.registers" /> to the <see cref="CurrentProcess" />'s
-    ///     <see cref="CPU.registers" />
+    ///     Called on a context switch. Copy the CPU's <see cref="CPU.Registers" /> to the <see cref="CurrentProcess" />'s
+    ///     <see cref="CPU.Registers" />
     /// </summary>
     private void SaveCPUState()
     {
-        CPU.registers.CopyTo(CurrentProcess.ProcessControlBlock.Registers, 0);
+        CPU.Registers.CopyTo(CurrentProcess.ProcessControlBlock.Registers, 0);
         CurrentProcess.ProcessControlBlock.ZeroFlag = CPU.ZeroFlag;
         CurrentProcess.ProcessControlBlock.SignFlag = CPU.SignFlag;
         CurrentProcess.ProcessControlBlock.InstructionPointer = CPU.InstructionPointer;
@@ -378,11 +378,11 @@ public class OS
 
     /// <summary>
     ///     Called on a context switch. Copy the <see cref="CurrentProcess" />'s
-    ///     <see cref="Process.ProcessControlBlock" /> to the CPU's <see cref="CPU.registers" />
+    ///     <see cref="Process.ProcessControlBlock" /> to the CPU's <see cref="CPU.Registers" />
     /// </summary>
     private void LoadCPUState()
     {
-        CurrentProcess.ProcessControlBlock.Registers.CopyTo(CPU.registers, 0);
+        CurrentProcess.ProcessControlBlock.Registers.CopyTo(CPU.Registers, 0);
         CPU.ZeroFlag = CurrentProcess.ProcessControlBlock.ZeroFlag;
         CPU.SignFlag = CurrentProcess.ProcessControlBlock.SignFlag;
         CPU.InstructionPointer = CurrentProcess.ProcessControlBlock.InstructionPointer;
@@ -394,7 +394,7 @@ public class OS
     /// <param name="prog">Program to load</param>
     /// <param name="memorySize">Size of memory in bytes to assign to this Process</param>
     /// <returns>The newly created Process</returns>
-    public Process createProcess(Program prog, uint memorySize)
+    public Process CreateProcess(Program prog, uint memorySize)
     {
         // Get an array represting the code block
         var processCode = prog.GetMemoryImage();
@@ -431,7 +431,7 @@ public class OS
         //
         // Set the length of the Code section
         //
-        var roundedCodeLength = CPU.UtilRoundToBoundary((uint)processCode.Length, CPU.pageSize);
+        var roundedCodeLength = CPU.UtilRoundToBoundary((uint)processCode.Length, CPU.PageSize);
         //uint roundedCodeLength = (uint)(CPU.pageSize * ((processCode.Length / CPU.pageSize) + ((processCode.Length % CPU.pageSize > 0) ? 1: 0)));
         p.ProcessControlBlock.CodeSize = roundedCodeLength;
 
@@ -505,7 +505,7 @@ public class OS
         }
 
         //increment the register pointed to by this memory
-        CPU.registers[register]++;
+        CPU.Registers[register]++;
     }
 
     /// <summary>
@@ -531,7 +531,7 @@ public class OS
         }
 
         //increment the register pointed to by this memory by the const next to it
-        CPU.registers[register] += param1;
+        CPU.Registers[register] += param1;
     }
 
     /// <summary>
@@ -557,7 +557,7 @@ public class OS
         }
 
         //add 1st register and 2nd register and put the result in 1st register
-        CPU.registers[register] = CPU.registers[register] + CPU.registers[param1];
+        CPU.Registers[register] = CPU.Registers[register] + CPU.Registers[param1];
     }
 
     /// <summary>
@@ -585,17 +585,17 @@ public class OS
 
         //compare register and const
         CPU.ZeroFlag = false;
-        if (CPU.registers[register] < param1)
+        if (CPU.Registers[register] < param1)
         {
             CPU.SignFlag = true;
         }
 
-        if (CPU.registers[register] > param1)
+        if (CPU.Registers[register] > param1)
         {
             CPU.SignFlag = false;
         }
 
-        if (CPU.registers[register] == param1)
+        if (CPU.Registers[register] == param1)
         {
             CPU.ZeroFlag = true;
         }
@@ -626,17 +626,17 @@ public class OS
 
         //compare register and const
         CPU.ZeroFlag = false;
-        if (CPU.registers[register1] < CPU.registers[register2])
+        if (CPU.Registers[register1] < CPU.Registers[register2])
         {
             CPU.SignFlag = true;
         }
 
-        if (CPU.registers[register1] > CPU.registers[register2])
+        if (CPU.Registers[register1] > CPU.Registers[register2])
         {
             CPU.SignFlag = false;
         }
 
-        if (CPU.registers[register1] == CPU.registers[register2])
+        if (CPU.Registers[register1] == CPU.Registers[register2])
         {
             CPU.ZeroFlag = true;
         }
@@ -666,7 +666,7 @@ public class OS
 
         StackPush(CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer);
 
-        CPU.InstructionPointer += CPU.registers[register];
+        CPU.InstructionPointer += CPU.Registers[register];
     }
 
     /// <summary>
@@ -693,7 +693,7 @@ public class OS
 
         StackPush(CurrentProcess.ProcessControlBlock.Pid, CPU.InstructionPointer);
 
-        CPU.InstructionPointer += MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.registers[register]];
+        CPU.InstructionPointer += MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.Registers[register]];
     }
 
     /// <summary>
@@ -742,7 +742,7 @@ public class OS
             Console.WriteLine(" Pid:{0} {1} r{2}", CurrentProcess.ProcessControlBlock.Pid, instruction, register);
         }
 
-        var instructionsToSkip = (int)CPU.registers[register];
+        var instructionsToSkip = (int)CPU.Registers[register];
         // Do some sillyness to substract if we are a negative number
         if (Math.Sign(instructionsToSkip) == -1)
         {
@@ -777,7 +777,7 @@ public class OS
 
         if (CPU.SignFlag)
         {
-            CPU.InstructionPointer += CPU.registers[register];
+            CPU.InstructionPointer += CPU.Registers[register];
         }
     }
 
@@ -804,7 +804,7 @@ public class OS
 
         if (CPU.SignFlag == false)
         {
-            CPU.InstructionPointer += CPU.registers[register];
+            CPU.InstructionPointer += CPU.Registers[register];
         }
     }
 
@@ -831,7 +831,7 @@ public class OS
 
         if (CPU.ZeroFlag)
         {
-            CPU.InstructionPointer += CPU.registers[register];
+            CPU.InstructionPointer += CPU.Registers[register];
         }
     }
 
@@ -887,7 +887,7 @@ public class OS
         }
 
         //move VALUE of param into 1st register 
-        CPU.registers[register] = param2;
+        CPU.Registers[register] = param2;
     }
 
     /// <summary>
@@ -913,7 +913,7 @@ public class OS
         }
 
         //move VALUE of 2nd register into 1st register 
-        CPU.registers[register1] = CPU.registers[register2];
+        CPU.Registers[register1] = CPU.Registers[register2];
     }
 
     /// <summary>
@@ -939,7 +939,7 @@ public class OS
         }
 
         //move VALUE of memory pointed to by 2nd register into 1st register 
-        CPU.registers[register1] = MemoryMgr.GetUIntFrom(CurrentProcess.ProcessControlBlock.Pid, CPU.registers[register2]);
+        CPU.Registers[register1] = MemoryMgr.GetUIntFrom(CurrentProcess.ProcessControlBlock.Pid, CPU.Registers[register2]);
     }
 
     /// <summary>
@@ -965,7 +965,7 @@ public class OS
         }
 
         //set memory pointed to by register 1 to contents of register2
-        MemoryMgr.SetUIntAt(CurrentProcess.ProcessControlBlock.Pid, CPU.registers[register1], CPU.registers[register2]);
+        MemoryMgr.SetUIntAt(CurrentProcess.ProcessControlBlock.Pid, CPU.Registers[register1], CPU.Registers[register2]);
     }
 
     /// <summary>
@@ -991,8 +991,8 @@ public class OS
         }
 
         //set memory point to by register 1 to contents of memory pointed to by register 2
-        MemoryMgr.SetUIntAt(CurrentProcess.ProcessControlBlock.Pid, CPU.registers[register1],
-            MemoryMgr.GetUIntFrom(CurrentProcess.ProcessControlBlock.Pid, CPU.registers[register2]));
+        MemoryMgr.SetUIntAt(CurrentProcess.ProcessControlBlock.Pid, CPU.Registers[register1],
+            MemoryMgr.GetUIntFrom(CurrentProcess.ProcessControlBlock.Pid, CPU.Registers[register2]));
     }
 
     /// <summary>
@@ -1016,7 +1016,7 @@ public class OS
             Console.WriteLine(" Pid:{0} {1} r{2}", CurrentProcess.ProcessControlBlock.Pid, instruction, register);
         }
 
-        Console.WriteLine(CPU.registers[register]);
+        Console.WriteLine(CPU.Registers[register]);
     }
 
     /// <summary>
@@ -1040,7 +1040,7 @@ public class OS
             Console.WriteLine(" Pid:{0} {1} r{2}", CurrentProcess.ProcessControlBlock.Pid, instruction, register);
         }
 
-        Console.WriteLine(MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.registers[register]]);
+        Console.WriteLine(MemoryMgr[CurrentProcess.ProcessControlBlock.Pid, CPU.Registers[register]]);
     }
 
     /// <summary>
@@ -1064,7 +1064,7 @@ public class OS
             Console.WriteLine(" Pid:{0} {1} r{2}", CurrentProcess.ProcessControlBlock.Pid, instruction, register);
         }
 
-        CPU.registers[register] = uint.Parse(Console.ReadLine());
+        CPU.Registers[register] = uint.Parse(Console.ReadLine());
     }
 
     /// <summary>
@@ -1092,7 +1092,7 @@ public class OS
         }
 
         //Set the number of clockCycles to sleep
-        CurrentProcess.ProcessControlBlock.SleepCounter = CPU.registers[register];
+        CurrentProcess.ProcessControlBlock.SleepCounter = CPU.Registers[register];
         CurrentProcess.ProcessControlBlock.State = ProcessState.WaitingAsleep;
     }
 
@@ -1118,7 +1118,7 @@ public class OS
             Console.WriteLine(" Pid:{0} {1} r{2}", CurrentProcess.ProcessControlBlock.Pid, instruction, register);
         }
 
-        CurrentProcess.ProcessControlBlock.Priority = (int)Math.Min(CPU.registers[register], (int)ProcessPriority.MaxPriority);
+        CurrentProcess.ProcessControlBlock.Priority = (int)Math.Min(CPU.Registers[register], (int)ProcessPriority.MaxPriority);
     }
 
     /// <summary>
@@ -1142,7 +1142,7 @@ public class OS
             Console.WriteLine(" Pid:{0} {1} r{2}", CurrentProcess.ProcessControlBlock.Pid, instruction, register);
         }
 
-        StackPush(CurrentProcess.ProcessControlBlock.Pid, CPU.registers[register]);
+        StackPush(CurrentProcess.ProcessControlBlock.Pid, CPU.Registers[register]);
     }
 
     /// <summary>
@@ -1192,7 +1192,7 @@ public class OS
 
         foreach (var p in _runningProcesses)
         {
-            if (p.ProcessControlBlock.Pid == CPU.registers[register])
+            if (p.ProcessControlBlock.Pid == CPU.Registers[register])
             {
                 p.ProcessControlBlock.State = ProcessState.Terminated;
                 Console.WriteLine("Process {0} has forceably terminated Process {1}", CurrentProcess.ProcessControlBlock.Pid,
@@ -1223,7 +1223,7 @@ public class OS
             Console.WriteLine(" Pid:{0} {1} r{2}", CurrentProcess.ProcessControlBlock.Pid, instruction, register);
         }
 
-        CPU.registers[register] = StackPop(CurrentProcess.ProcessControlBlock.Pid);
+        CPU.Registers[register] = StackPop(CurrentProcess.ProcessControlBlock.Pid);
     }
 
     /// <summary>
@@ -1249,7 +1249,7 @@ public class OS
         }
 
         //move VALUE of memory pointed to by 2nd register into 1st register 
-        MemoryMgr.SetMemoryOfProcess(CurrentProcess.ProcessControlBlock.Pid, CPU.registers[register1], CPU.registers[register2], 0);
+        MemoryMgr.SetMemoryOfProcess(CurrentProcess.ProcessControlBlock.Pid, CPU.Registers[register1], CPU.Registers[register2], 0);
     }
 
     /// <summary>
@@ -1273,7 +1273,7 @@ public class OS
             Console.WriteLine(" Pid:{0} {1} r{2}", CurrentProcess.ProcessControlBlock.Pid, instruction, register);
         }
 
-        MemoryMgr.SetUIntAt(CurrentProcess.ProcessControlBlock.Pid, CPU.registers[register], StackPop(CurrentProcess.ProcessControlBlock.Pid));
+        MemoryMgr.SetUIntAt(CurrentProcess.ProcessControlBlock.Pid, CPU.Registers[register], StackPop(CurrentProcess.ProcessControlBlock.Pid));
     }
 
     /// <summary>
@@ -1300,14 +1300,14 @@ public class OS
         }
 
         //Are we the first ones here? with a valid lock?
-        if (CPU.registers[register] > 0 && CPU.registers[register] <= 10)
+        if (CPU.Registers[register] > 0 && CPU.Registers[register] <= 10)
         {
-            if (Locks[CPU.registers[register]] == 0)
+            if (Locks[CPU.Registers[register]] == 0)
             {
                 //Set the lock specified in the register as locked...
-                Locks[CPU.registers[register]] = CurrentProcess.ProcessControlBlock.Pid;
+                Locks[CPU.Registers[register]] = CurrentProcess.ProcessControlBlock.Pid;
             }
-            else if (Locks[CPU.registers[register]] == CurrentProcess.ProcessControlBlock.Pid)
+            else if (Locks[CPU.Registers[register]] == CurrentProcess.ProcessControlBlock.Pid)
             {
                 //No-Op, we already have this lock
                 ;
@@ -1315,7 +1315,7 @@ public class OS
             else
             {
                 //Get in line for this lock
-                CurrentProcess.ProcessControlBlock.WaitingLock = CPU.registers[register];
+                CurrentProcess.ProcessControlBlock.WaitingLock = CPU.Registers[register];
                 CurrentProcess.ProcessControlBlock.State = ProcessState.WaitingOnLock;
             }
         }
@@ -1347,12 +1347,12 @@ public class OS
         }
 
         //Release only if we already have this lock, and it's a valid lock
-        if (CPU.registers[register] > 0 && CPU.registers[register] <= 10)
+        if (CPU.Registers[register] > 0 && CPU.Registers[register] <= 10)
         {
-            if (Locks[CPU.registers[register]] == CurrentProcess.ProcessControlBlock.Pid)
+            if (Locks[CPU.Registers[register]] == CurrentProcess.ProcessControlBlock.Pid)
             {
                 //set the lock back to 0 (the OS)
-                Locks[CPU.registers[register]] = 0;
+                Locks[CPU.Registers[register]] = 0;
             }
         }
     }
@@ -1378,9 +1378,9 @@ public class OS
             Console.WriteLine(" Pid:{0} {1} r{2}", CurrentProcess.ProcessControlBlock.Pid, instruction, register);
         }
 
-        if (CPU.registers[register] > 0 && CPU.registers[register] <= 10)
+        if (CPU.Registers[register] > 0 && CPU.Registers[register] <= 10)
         {
-            Events[CPU.registers[register]] = EventState.Signaled;
+            Events[CPU.Registers[register]] = EventState.Signaled;
         }
     }
 
@@ -1405,9 +1405,9 @@ public class OS
             Console.WriteLine(" Pid:{0} {1} r{2}", CurrentProcess.ProcessControlBlock.Pid, instruction, register);
         }
 
-        if (CPU.registers[register] > 0 && CPU.registers[register] <= 10)
+        if (CPU.Registers[register] > 0 && CPU.Registers[register] <= 10)
         {
-            CurrentProcess.ProcessControlBlock.WaitingEvent = CPU.registers[register];
+            CurrentProcess.ProcessControlBlock.WaitingEvent = CPU.Registers[register];
             CurrentProcess.ProcessControlBlock.State = ProcessState.WaitingOnEvent;
         }
     }
@@ -1434,7 +1434,7 @@ public class OS
             Console.WriteLine(" Pid:{0} {1} r{2} r{3}", CurrentProcess.ProcessControlBlock.Pid, instruction, register1, register2);
         }
 
-        CPU.registers[register2] = MemoryMgr.MapSharedMemoryToProcess(CPU.registers[register1], CurrentProcess.ProcessControlBlock.Pid);
+        CPU.Registers[register2] = MemoryMgr.MapSharedMemoryToProcess(CPU.Registers[register1], CurrentProcess.ProcessControlBlock.Pid);
     }
 
 
@@ -1461,9 +1461,9 @@ public class OS
             Console.WriteLine(" Pid:{0} {1} r{2} r{3}", CurrentProcess.ProcessControlBlock.Pid, instruction, register1, register2);
         }
 
-        var addr = MemoryMgr.ProcessHeapAlloc(CurrentProcess, CPU.registers[register1]);
+        var addr = MemoryMgr.ProcessHeapAlloc(CurrentProcess, CPU.Registers[register1]);
 
-        CPU.registers[register2] = addr;
+        CPU.Registers[register2] = addr;
     }
 
     /// <summary>
@@ -1487,7 +1487,7 @@ public class OS
             Console.WriteLine(" Pid:{0} {1} r{2}", CurrentProcess.ProcessControlBlock.Pid, instruction, register1);
         }
 
-        MemoryMgr.ProcessHeapFree(CurrentProcess, CPU.registers[register1]);
+        MemoryMgr.ProcessHeapFree(CurrentProcess, CPU.Registers[register1]);
     }
 
 

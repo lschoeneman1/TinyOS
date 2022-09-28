@@ -36,7 +36,7 @@ public enum ProcessState
     WaitingOnEvent,
 
     /// <summary>
-    ///     The state of a <see cref="Process" /> waiting to be removed from the Running <see cref="ProcessCollection" />
+    ///     The state of a <see cref="Process" /> waiting to be removed from the Running <see cref="Processes" />
     /// </summary>
     Terminated
 }

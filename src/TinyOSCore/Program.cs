@@ -26,7 +26,7 @@ public class Program
 
     /// <summary>
     ///     Spins through the <see cref="Instructions" /> and creates an array of bytes
-    ///     that is then copied into Memory by <see cref="OS.createProcess" />
+    ///     that is then copied into Memory by <see cref="OS.CreateProcess" />
     /// </summary>
     /// <returns>Array of bytes representing the <see cref="Program" /> in memory</returns>
     public byte[] GetMemoryImage()

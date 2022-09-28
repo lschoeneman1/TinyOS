@@ -25,5 +25,5 @@ public class MemoryPageValue
     ///     The array of bytes holding the value of memory for this page
     /// </summary>
     [field: XmlArray(ElementName = "byte", Namespace = "http://www.hanselman.com")]
-    public byte[] Memory1 { get; set; } = new byte[CPU.pageSize];
+    public byte[] Memory1 { get; set; } = new byte[CPU.PageSize];
 }

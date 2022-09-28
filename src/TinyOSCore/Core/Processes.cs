@@ -98,30 +98,7 @@ namespace TinyOSCore.Core
         {
             return _processes.IndexOf(process);
         }
-
-        /// <summary>
-        /// Inserts a <see cref='Process'/> into the <see cref='Processes'/> at the specified index.
-        /// </summary>
-        /// <param name='index'>The zero-based index where <paramref name='process'/> should be inserted.</param>
-        /// <param name='process'>The <see cref='Process'/> to insert.</param>
-        /// <returns>None.</returns>
-        /// <seealso cref='Add'/>
-        public void Insert(int index, Process process)
-        {
-            _processes.Insert(index, process);
-        }
-
-        /// <summary>
-        ///     Removes a specific <see cref='Process'/> from the 
-        ///    <see cref='Processes'/> .
-        /// </summary>
-        /// <param name='process'>The <see cref='Process'/> to remove from the <see cref='Processes'/> .</param>
-        /// <returns>None.</returns>
-        /// <exception cref='ArgumentException'><paramref name='process'/> is not found in the Collection. </exception>
-        public void Remove(Process process)
-        {
-            _processes.Remove(process);
-        }
+      
 
         /// <summary>
         /// Remove a process from the processes at position i
