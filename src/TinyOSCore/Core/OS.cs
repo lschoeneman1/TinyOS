@@ -14,7 +14,7 @@ public delegate void SystemCall();
 
 /// <summary>
 ///     The definition of an Operarting System, including a <see cref="MemoryManager" /> and a
-///     <see cref="ProcessCollection" />
+///     <see cref="Processes" />
 /// </summary>
 public class OS
 {
@@ -42,7 +42,7 @@ public class OS
     /// <summary>
     ///     Contains the <see cref="Process" /> and the <see cref="Process.ProcessControlBlock" /> for all runningProcesses
     /// </summary>
-    private readonly ProcessCollection _runningProcesses = new ProcessCollection();
+    private readonly Processes _runningProcesses = new Processes();
 
     /// <summary>
     ///     Public constructor for the OS
@@ -167,24 +167,9 @@ public class OS
     {
         foreach (var process in _runningProcesses)
         {
-            switch (process.ProcessControlBlock.State)
+            if (process.ProcessControlBlock.State is ProcessState.NewProcess or ProcessState.Ready)
             {
-                case ProcessState.Terminated:
-                    //yank old processes outside the foreach
-                    break;
-                case ProcessState.WaitingAsleep:
-                    //is this process waiting for an event?
-                    break;
-                case ProcessState.WaitingOnLock:
-                    //is this process waiting for an event?
-                    break;
-                case ProcessState.WaitingOnEvent:
-                    //is this process waiting for an event?
-                    break;
-                case ProcessState.NewProcess:
-                case ProcessState.Ready:
-                    HandleRunningAndReadyProcesses(process);
-                    break;
+                HandleRunningAndReadyProcesses(process);
             }
         }
     }
@@ -207,35 +192,7 @@ public class OS
         {
             CurrentProcess.ProcessControlBlock.State = ProcessState.Running;
 
-            //CPU.DumpPhysicalMemory();
-            //CPU.DumpRegisters();
-
-            try
-            {
-                CPU.ExecuteNextOpCode();
-                CurrentProcess.ProcessControlBlock.ClockCycles++;
-            }
-            catch (MemoryException e)
-            {
-                Console.WriteLine(e.ToString());
-                CPU.DumpRegisters();
-                CurrentProcess.ProcessControlBlock.State = ProcessState.Terminated;
-            }
-            catch (StackException e)
-            {
-                Console.WriteLine(e.ToString());
-                CPU.DumpRegisters();
-                CurrentProcess.ProcessControlBlock.State = ProcessState.Terminated;
-            }
-            catch (HeapException e)
-            {
-                Console.WriteLine(e.ToString());
-                CPU.DumpRegisters();
-                CurrentProcess.ProcessControlBlock.State = ProcessState.Terminated;
-            }
-
-            CPU.DumpPhysicalMemory();
-            CPU.DumpRegisters();
+            ExecuteNextOpCode();
 
             //
             // Update any sleeping processes
@@ -246,13 +203,11 @@ public class OS
                 {
                     // a sleepCounter of 0 sleeps forever if we are waiting
                     //If we JUST reached 0, wake up!
-                    if (sleepingProcess.ProcessControlBlock.SleepCounter != 0)
+                    if (sleepingProcess.ProcessControlBlock.SleepCounter != 0 
+                        && --sleepingProcess.ProcessControlBlock.SleepCounter == 0)
                     {
-                        if (--sleepingProcess.ProcessControlBlock.SleepCounter == 0)
-                        {
-                            sleepingProcess.ProcessControlBlock.State = ProcessState.Ready;
-                            preemptCurrentProcess = true;
-                        }
+                        sleepingProcess.ProcessControlBlock.State = ProcessState.Ready;
+                        preemptCurrentProcess = true;
                     }
                 }
                 else if (sleepingProcess.ProcessControlBlock.State == ProcessState.WaitingOnEvent)
@@ -289,17 +244,13 @@ public class OS
             }
 
             // Have we used up our slice of time?
-            var eligible = CurrentProcess.ProcessControlBlock.ClockCycles == 0 ||
-                            CurrentProcess.ProcessControlBlock.ClockCycles % CurrentProcess.ProcessControlBlock.TimeQuantum != 0;
-            if (!eligible)
+            var eligible = CurrentProcess.ProcessControlBlock.ClockCycles == 0 
+                                || CurrentProcess.ProcessControlBlock.ClockCycles % CurrentProcess.ProcessControlBlock.TimeQuantum != 0;
+            if (!eligible || preemptCurrentProcess)
             {
                 break;
             }
 
-            if (preemptCurrentProcess)
-            {
-                break;
-            }
         }
 
         if (CurrentProcess.ProcessControlBlock.State != ProcessState.Terminated)
@@ -323,6 +274,39 @@ public class OS
         }
 
         CurrentProcess = null;
+    }
+
+    /// <summary>
+    /// Execute the next opcode and update the state appriopriately if errors occur
+    /// </summary>
+    private void ExecuteNextOpCode()
+    {
+        try
+        {
+            CPU.ExecuteNextOpCode();
+            CurrentProcess.ProcessControlBlock.ClockCycles++;
+        }
+        catch (MemoryException e)
+        {
+            Console.WriteLine(e.ToString());
+            CPU.DumpRegisters();
+            CurrentProcess.ProcessControlBlock.State = ProcessState.Terminated;
+        }
+        catch (StackException e)
+        {
+            Console.WriteLine(e.ToString());
+            CPU.DumpRegisters();
+            CurrentProcess.ProcessControlBlock.State = ProcessState.Terminated;
+        }
+        catch (HeapException e)
+        {
+            Console.WriteLine(e.ToString());
+            CPU.DumpRegisters();
+            CurrentProcess.ProcessControlBlock.State = ProcessState.Terminated;
+        }
+
+        CPU.DumpPhysicalMemory();
+        CPU.DumpRegisters();
     }
 
     /// <summary>
@@ -356,27 +340,20 @@ public class OS
     /// <summary>
     ///     Outputs a view of memory from the Process's point of view
     /// </summary>
-    /// <param name="p">The Process to Dump</param>
-    public void DumpProcessMemory(Process p)
+    /// <param name="process">The Process to Dump</param>
+    public void DumpProcessMemory(Process process)
     {
         var address = 0;
-        for (uint i = 0; i < p.ProcessControlBlock.ProcessMemorySize; i++)
+        for (uint i = 0; i < process.ProcessControlBlock.ProcessMemorySize; i++)
         {
-            var b = MemoryMgr[p.ProcessControlBlock.Pid, i];
+            var b = MemoryMgr[process.ProcessControlBlock.Pid, i];
             if (address == 0 || address % 16 == 0)
             {
                 Console.Write($"{Environment.NewLine}{address,-4:000} ");
             }
 
             address++;
-            if (b == 0)
-            {
-                Console.Write($"{"-",3}");
-            }
-            else
-            {
-                Console.Write($"{(int)b,3}");
-            }
+            Console.Write(b == 0 ? $"{"-",3}" : $"{(int)b,3}");
 
             if (address % 4 == 0 && address % 16 != 0)
             {
@@ -394,19 +371,19 @@ public class OS
     private void SaveCPUState()
     {
         CPU.registers.CopyTo(CurrentProcess.ProcessControlBlock.Registers, 0);
-        CurrentProcess.ProcessControlBlock.zf = CPU.ZeroFlag;
+        CurrentProcess.ProcessControlBlock.ZeroFlag = CPU.ZeroFlag;
         CurrentProcess.ProcessControlBlock.SignFlag = CPU.SignFlag;
         CurrentProcess.ProcessControlBlock.InstructionPointer = CPU.InstructionPointer;
     }
 
     /// <summary>
     ///     Called on a context switch. Copy the <see cref="CurrentProcess" />'s
-    ///     <see cref="Process.ProcessControlBlock.registers" /> to the CPU's <see cref="CPU.registers" />
+    ///     <see cref="Process.ProcessControlBlock" /> to the CPU's <see cref="CPU.registers" />
     /// </summary>
     private void LoadCPUState()
     {
         CurrentProcess.ProcessControlBlock.Registers.CopyTo(CPU.registers, 0);
-        CPU.ZeroFlag = CurrentProcess.ProcessControlBlock.zf;
+        CPU.ZeroFlag = CurrentProcess.ProcessControlBlock.ZeroFlag;
         CPU.SignFlag = CurrentProcess.ProcessControlBlock.SignFlag;
         CPU.InstructionPointer = CurrentProcess.ProcessControlBlock.InstructionPointer;
     }

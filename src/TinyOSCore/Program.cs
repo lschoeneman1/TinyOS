@@ -13,19 +13,19 @@ namespace TinyOSCore;
 /// </summary>
 public class Program
 {
-    private readonly InstructionCollection _instructions;
+    private readonly Instructions _instructions;
 
     /// <summary>
     ///     Public constructor for a Program
     /// </summary>
     /// <param name="instructionsParam">The collection of <see cref="Instruction" /> objects that make up this Program</param>
-    public Program(InstructionCollection instructionsParam)
+    public Program(Instructions instructionsParam)
     {
-        _instructions = new InstructionCollection(instructionsParam);
+        _instructions = new Instructions(instructionsParam);
     }
 
     /// <summary>
-    ///     Spins through the <see cref="InstructionCollection" /> and creates an array of bytes
+    ///     Spins through the <see cref="Instructions" /> and creates an array of bytes
     ///     that is then copied into Memory by <see cref="OS.createProcess" />
     /// </summary>
     /// <returns>Array of bytes representing the <see cref="Program" /> in memory</returns>
@@ -65,14 +65,14 @@ public class Program
 
     /// <summary>
     ///     Loads a Program from a file on disk.  For each line the Program, create an <see cref="Instruction" />
-    ///     and pass the raw string to the Instructions's constructor.  The resulting <see cref="InstructionCollection" />
+    ///     and pass the raw string to the Instructions's constructor.  The resulting <see cref="Instructions" />
     ///     is the Program
     /// </summary>
     /// <param name="fileName">file with code to load</param>
     /// <returns>a new loaded Program</returns>
     public static Program LoadProgram(string fileName)
     {
-        var instructions = new InstructionCollection();
+        var instructions = new Instructions();
         var instructionLines = File.ReadAllLines(fileName);
         foreach (var rawInstructionLine in instructionLines)
         {

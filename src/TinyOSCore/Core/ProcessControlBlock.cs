@@ -138,7 +138,7 @@ public class ProcessControlBlock
     /// <summary>
     ///     Public get/set accessor for the Sign Flag
     /// </summary>
-    public bool SignFlag //Sign Flag
+    public bool SignFlag 
     {
         get => _bitFlagRegisters[0];
         set => _bitFlagRegisters[0] = value;
@@ -147,7 +147,7 @@ public class ProcessControlBlock
     /// <summary>
     ///     Public get/set accessor for the Zero Flag
     /// </summary>
-    public bool zf //Zero Flag
+    public bool ZeroFlag 
     {
         get => _bitFlagRegisters[1];
         set => _bitFlagRegisters[1] = value;
