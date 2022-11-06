@@ -26,7 +26,7 @@ public class OS
     private readonly bool _dumpInstructions;
 
     /// <summary>
-    ///     Contains the <see cref="Process" /> and the <see cref="Process.ProcessControlBlock" /> for all runningProcesses
+    ///     Contains the <see cref="Process" /> and the <see cref="Process.ProcessControlBlock" /> for all RunningProcesses
     /// </summary>
     public Processes RunningProcesses { get; } = new Processes();
 
@@ -55,13 +55,13 @@ public class OS
     public MemoryManager MemoryMgr { get; }
 
     /// <summary>
-    ///     There are 10 locks, numbered 1 to 10.  Lock 0 is not used.
+    ///     There are 10 Locks, numbered 1 to 10.  Lock 0 is not used.
     ///     We will store 0 when the lock is free, or the ProcessID when the lock is acquired
     /// </summary>
     public uint[] Locks { get; } = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 
     /// <summary>
-    ///     There are 10 events, numbered 1 to 10.  Event 0 is not used
+    ///     There are 10 Events, numbered 1 to 10.  Event 0 is not used
     /// </summary>
     public EventState[] Events { get; } = new EventState[11];
 
@@ -103,7 +103,7 @@ public class OS
     }
 
     /// <summary>
-    ///     Releases any locks held by this process.
+    ///     Releases any Locks held by this process.
     ///     This function is called when the process exits.
     /// </summary>
     /// <param name="pid">Process ID</param>
@@ -118,6 +118,181 @@ public class OS
         }
     }
 
+    public void execute()
+    {
+        while (true)
+        {
+            //
+            // Yank terminated processes
+            //
+            for (int i = RunningProcesses.Count - 1; i >= 0; i--)
+            {
+                if (RunningProcesses[i].ProcessControlBlock.State == ProcessState.Terminated)
+                {
+                    DumpProcessStatistics(i);
+                    MemoryMgr.ReleaseMemoryOfProcess(RunningProcesses[i].ProcessControlBlock.Pid);
+                    RunningProcesses[i].ProcessControlBlock.HeapPageTable.Clear();
+                    ReleaseLocksOfProccess(RunningProcesses[i].ProcessControlBlock.Pid);
+                    RunningProcesses.RemoveAt(i);
+                    CPU.DumpPhysicalMemory();
+                }
+            }
+
+            // Sort high priority first + least used clock cycles first to avoid starvation
+            // see Process.Compare
+            // 
+            RunningProcesses.Sort();
+
+            if (RunningProcesses.Count == 0)
+            {
+                Console.WriteLine("No Processes");
+                if (bool.Parse(EntryPoint.Configuration["PauseOnExit"]) == true) System.Console.ReadLine();
+                System.Environment.Exit(0);
+            }
+            else
+            {
+                foreach (Process p in RunningProcesses)
+                {
+                    switch (p.ProcessControlBlock.State)
+                    {
+                        case ProcessState.Terminated:
+                            //yank old processes outside the foreach
+                            break;
+                        case ProcessState.WaitingAsleep:
+                            //is this process waiting for an event?
+                            break;
+                        case ProcessState.WaitingOnLock:
+                            //is this process waiting for an event?
+                            break;
+                        case ProcessState.WaitingOnEvent:
+                            //is this process waiting for an event?
+                            break;
+                        case ProcessState.NewProcess:
+                        case ProcessState.Ready:
+                            CurrentProcess = p;
+
+                            //copy state from ProcessControlBlock to CPU
+                            LoadCPUState();
+
+                            DumpContextSwitchIn();
+
+                            // Reset this flag. If we need to interrupt execution 
+                            // because a lock has been made available
+                            // or an Event has signaled, we can preempt the current process
+                            bool bPreemptCurrentProcess = false;
+
+                            while (CurrentProcessIsEligible())
+                            {
+                                CurrentProcess.ProcessControlBlock.State = ProcessState.Running;
+
+                                //CPU.DumpPhysicalMemory();
+                                //CPU.DumpRegisters();
+
+                                try
+                                {
+                                    CPU.ExecuteNextOpCode();
+                                    CurrentProcess.ProcessControlBlock.ClockCycles++;
+                                }
+                                catch (MemoryException e)
+                                {
+                                    Console.WriteLine(e.ToString());
+                                    CPU.DumpRegisters();
+                                    CurrentProcess.ProcessControlBlock.State = ProcessState.Terminated;
+                                }
+                                catch (StackException e)
+                                {
+                                    Console.WriteLine(e.ToString());
+                                    CPU.DumpRegisters();
+                                    CurrentProcess.ProcessControlBlock.State = ProcessState.Terminated;
+                                }
+                                catch (HeapException e)
+                                {
+                                    Console.WriteLine(e.ToString());
+                                    CPU.DumpRegisters();
+                                    CurrentProcess.ProcessControlBlock.State = ProcessState.Terminated;
+                                }
+
+                                CPU.DumpPhysicalMemory();
+                                CPU.DumpRegisters();
+
+                                //
+                                // Update any sleeping processes
+                                //
+                                foreach (Process sleepingProcess in RunningProcesses)
+                                {
+                                    switch (sleepingProcess.ProcessControlBlock.State)
+                                    {
+                                        case ProcessState.WaitingAsleep:
+                                            // a SleepCounter of 0 sleeps forever if we are waiting
+                                            if (sleepingProcess.ProcessControlBlock.SleepCounter != 0)
+                                                //If we JUST reached 0, wake up!
+                                                if (--sleepingProcess.ProcessControlBlock.SleepCounter == 0)
+                                                {
+                                                    sleepingProcess.ProcessControlBlock.State = ProcessState.Ready;
+                                                    bPreemptCurrentProcess = true;
+                                                }
+                                            break;
+                                        case ProcessState.WaitingOnEvent:
+                                            // Are we waiting for an event?  We'd better be!
+                                            Debug.Assert(sleepingProcess.ProcessControlBlock.WaitingEvent != 0);
+
+                                            // Had the event been signalled recently?
+                                            if (this.Events[sleepingProcess.ProcessControlBlock.WaitingEvent] == EventState.Signaled)
+                                            {
+                                                this.Events[sleepingProcess.ProcessControlBlock.WaitingEvent] = EventState.NonSignaled;
+                                                sleepingProcess.ProcessControlBlock.State = ProcessState.Ready;
+                                                sleepingProcess.ProcessControlBlock.WaitingEvent = 0;
+                                                bPreemptCurrentProcess = true;
+                                            }
+                                            break;
+                                        case ProcessState.WaitingOnLock:
+                                            // We are are in the WaitingOnLock state, we can't wait on the "0" lock
+                                            Debug.Assert(sleepingProcess.ProcessControlBlock.WaitingLock != 0);
+
+                                            // Has the lock be released recently?
+                                            if (this.Locks[sleepingProcess.ProcessControlBlock.WaitingLock] == 0)
+                                            {
+                                                // Acquire the Lock and wake up!
+                                                this.Locks[sleepingProcess.ProcessControlBlock.WaitingLock] = sleepingProcess.ProcessControlBlock.WaitingLock;
+                                                sleepingProcess.ProcessControlBlock.State = ProcessState.Ready; bPreemptCurrentProcess = true;
+                                                sleepingProcess.ProcessControlBlock.WaitingLock = 0;
+                                                bPreemptCurrentProcess = true;
+                                            }
+                                            break;
+                                    }
+                                }
+
+                                // Have we used up our slice of time?
+                                bool bEligible = CurrentProcess.ProcessControlBlock.ClockCycles == 0 || (CurrentProcess.ProcessControlBlock.ClockCycles % CurrentProcess.ProcessControlBlock.TimeQuantum != 0);
+                                if (!bEligible)
+                                    break;
+                                if (bPreemptCurrentProcess)
+                                    break;
+                            }
+                            if (CurrentProcess.ProcessControlBlock.State != ProcessState.Terminated)
+                            {
+                                //copy state from CPU to ProcessControlBlock
+                                if (CurrentProcess.ProcessControlBlock.State != ProcessState.WaitingAsleep
+                                    && CurrentProcess.ProcessControlBlock.State != ProcessState.WaitingOnLock
+                                    && CurrentProcess.ProcessControlBlock.State != ProcessState.WaitingOnEvent)
+                                    CurrentProcess.ProcessControlBlock.State = ProcessState.Ready;
+                                CurrentProcess.ProcessControlBlock.ContextSwitches++;
+
+                                DumpContextSwitchOut();
+
+                                SaveCPUState();
+
+                                //Clear Registers for testing
+                                CPU.Registers = new uint[12];
+                            }
+                            CurrentProcess = null;
+                            break;
+                    }
+                }
+            }
+        }
+    }
+
     /// <summary>
     ///     The primary control loop for the whole OS.
     ///     Spins through eligible processes and executes their opCodes
@@ -125,6 +300,7 @@ public class OS
     /// </summary>
     public void Execute()
     {
+//        return;
         while (true)
         {
             //
@@ -180,7 +356,7 @@ public class OS
     {
         CurrentProcess = process;
 
-        //copy state from PCB to CPU
+        //copy state from ProcessControlBlock to CPU
         LoadCPUState();
 
         DumpContextSwitchIn();
@@ -203,7 +379,7 @@ public class OS
             {
                 if (sleepingProcess.ProcessControlBlock.State == ProcessState.WaitingAsleep)
                 {
-                    // a sleepCounter of 0 sleeps forever if we are waiting
+                    // a SleepCounter of 0 sleeps forever if we are waiting
                     //If we JUST reached 0, wake up!
                     if (sleepingProcess.ProcessControlBlock.SleepCounter != 0 
                         && --sleepingProcess.ProcessControlBlock.SleepCounter == 0)
@@ -257,7 +433,7 @@ public class OS
 
         if (CurrentProcess.ProcessControlBlock.State != ProcessState.Terminated)
         {
-            //copy state from CPU to PCB
+            //copy state from CPU to ProcessControlBlock
             if (CurrentProcess.ProcessControlBlock.State != ProcessState.WaitingAsleep
                 && CurrentProcess.ProcessControlBlock.State != ProcessState.WaitingOnLock
                 && CurrentProcess.ProcessControlBlock.State != ProcessState.WaitingOnEvent)
@@ -271,7 +447,7 @@ public class OS
 
             SaveCPUState();
 
-            //Clear registers for testing
+            //Clear Registers for testing
             CPU.Registers = new uint[12];
         }
 
@@ -454,9 +630,11 @@ public class OS
 
         MemoryMgr.CreateHeapTableForProcess(p);
 
-        // Add ourselves to the runningProcesses table
+        // Add ourselves to the RunningProcesses table
         RunningProcesses.Add(p);
         return p;
     }
 
 }
+
+		

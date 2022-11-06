@@ -58,7 +58,7 @@ internal class EntryPoint
                     var p = Program.LoadProgram(args[i]);
                     var rp = theOS.CreateProcess(p, uint.Parse(Configuration["ProcessMemory"]));
                     Console.WriteLine("Process id {0} has {1} bytes of process memory and {2} bytes of heap",
-                        rp.ProcessControlBlock.Pid, Configuration["ProcessMemory"],
+                        rp.ProcessControlBlock.Pid, Configuration["ProcessMemory"], 
                         rp.ProcessControlBlock.HeapAddrEnd - rp.ProcessControlBlock.HeapAddrStart);
                     p.DumpProgram();
                 }
@@ -88,6 +88,7 @@ internal class EntryPoint
     private static void PrintHeader()
     {
         Console.WriteLine("CSCI 480 Mini Operating System");
+        Console.WriteLine("Version .01");
         Console.WriteLine(Assembly.GetExecutingAssembly().FullName);
     }
 }
